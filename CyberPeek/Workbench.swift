@@ -1,0 +1,280 @@
+import AppKit
+
+final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
+    let window = NSWindow(contentRect: NSRect(x:0,y:0,width:1180,height:748), styleMask:[.titled,.closable,.miniaturizable,.resizable], backing:.buffered,defer:false)
+    let side = Sidebar(), quick = QuickOpen()
+    let split = NSSplitView(), rail = NSView(), body = NSView(), editorHost = NSView()
+    let tabs = NSStackView(), tabScroll = NSScrollView()
+    let crumb = label("",11,color:Palette.muted), branch = label("",11), position = label("",11), format = label("",11)
+    let statusMessage = label("",11,color:Palette.muted)
+    let conflictBar = NSView(), crumbBar = NSView()
+    let pathPasteboard: NSPasteboard
+    var projectButton: ActionButton!
+    var activity: [Section:(ActionButton,NSView)] = [:]
+    var root: URL?, documents = [Editor](), current: Editor?
+    var monitor: WorkspaceMonitor?, repoMonitor: WorkspaceMonitor?, gitMonitor: WorkspaceMonitor?, eventTask: DispatchWorkItem?
+    var queryJob: ShellJob?, indexJob: ShellJob?, queryVersion = 0, projectVersion = 0, loadVersion = 0
+    var gitVersion = 0, diskVersion = 0
+    private var toolbarDelegate: ToolbarItems!
+    enum Target { case file(URL), patch(URL,Change), blob(URL,String,String) }
+    struct Location { let target: Target; let line: Int; let column: Int }
+    var targets: [String:Target] = [:], back = [Location](), forward = [Location]()
+    var welcome: NSView!
+    init(pathPasteboard: NSPasteboard = .general) {
+        self.pathPasteboard = pathPasteboard
+        super.init()
+        window.delegate = self; window.minSize = NSSize(width:740,height:420)
+        window.title = "CyberPeek"; window.titleVisibility = .hidden; window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named:.darkAqua)
+        window.backgroundColor = Palette.canvas; window.toolbarStyle = .unifiedCompact
+        setupToolbar(); build()
+        side.onFolder = { [weak self] in self?.chooseFolder() }
+        side.onCopyRelativePath = { [weak self] url in self?.copyRelativePath(of: url) }
+        side.onRefresh = { [weak self] in self?.refresh() }
+        side.onQuery = { [weak self] in self?.search($0) }
+        side.onOpen = { [weak self] node,pin in self?.openNode(node,pin:pin) }
+        side.onCommit = { [weak self] _, commit in self?.loadCommit(commit) }
+        quick.onChoose = { [weak self] path,line in
+            guard let self, let root = self.root else { return }
+            self.open(.file(root.appendingPathComponent(path)),line:line,pin:true)
+        }
+        selectSection(.files); show(nil)
+        window.center()
+    }
+    private func setupToolbar() {
+        projectButton = ActionButton("  打开文件夹",icon:"magnifyingglass",tip:"快速打开文件  ⌘P",size:12) { [weak self] in self?.quickOpen() }
+        projectButton.font = .systemFont(ofSize:12); projectButton.contentTintColor = Palette.text
+        projectButton.wantsLayer = true; projectButton.layer?.cornerRadius = 6
+        projectButton.layer?.backgroundColor = Palette.line.cgColor; projectButton.width(260); projectButton.height(25)
+        let previous = ActionButton(icon:"arrow.left",tip:"后退  ⌃−") { [weak self] in self?.navigate(backwards:true) }
+        let next = ActionButton(icon:"arrow.right",tip:"前进  ⌃⇧−") { [weak self] in self?.navigate(backwards:false) }
+        toolbarDelegate = ToolbarItems(views:["back":previous,"forward":next,"project":projectButton])
+        let toolbar = NSToolbar(identifier:"WorkbenchToolbar"); toolbar.delegate = toolbarDelegate
+        toolbar.displayMode = .iconOnly; toolbar.centeredItemIdentifier = .init("project")
+        window.toolbar = toolbar
+    }
+    private func build() {
+        let canvas = NSView(); window.contentView = canvas
+        let footer = NSView(); footer.fill(Palette.chrome)
+        let scmIcon = NSImageView(image: symbol("point.3.connected.trianglepath.dotted",size:12) ?? NSImage())
+        scmIcon.contentTintColor = Palette.blue
+        let info = stack([scmIcon,branch,statusMessage,NSView(),position,format],spacing:12)
+        info.edgeInsets = .init(top:0,left:12,bottom:0,right:13); footer.place(info)
+        let main = NSView()
+        let vertical = stack([main,footer],vertical:true); canvas.place(vertical)
+        for v in [main,footer] { v.widthAnchor.constraint(equalTo:vertical.widthAnchor).isActive = true }
+        footer.height(24)
+        rail.fill(Palette.rail)
+        let railColumn = stack([],vertical:true)
+        for (section,icon,tip) in [(Section.files,"doc.on.doc","资源管理器  ⇧⌘E"),(.search,"magnifyingglass","搜索  ⇧⌘F"),(.git,"arrow.triangle.branch","源代码管理  ⌃⇧G")] {
+            let button = ActionButton(icon:icon,tip:tip,size:21) { [weak self] in self?.selectSection(section) }
+            let holder = NSView(), indicator = NSView(); holder.place(button)
+            holder.width(49); holder.height(49); indicator.fill(Palette.blue)
+            indicator.translatesAutoresizingMaskIntoConstraints = false; holder.addSubview(indicator)
+            NSLayoutConstraint.activate([indicator.leadingAnchor.constraint(equalTo:holder.leadingAnchor),indicator.topAnchor.constraint(equalTo:holder.topAnchor,constant:8),
+                indicator.bottomAnchor.constraint(equalTo:holder.bottomAnchor,constant:-8),indicator.widthAnchor.constraint(equalToConstant:2)])
+            railColumn.addArrangedSubview(holder); activity[section] = (button,indicator)
+        }
+        railColumn.translatesAutoresizingMaskIntoConstraints = false; rail.addSubview(railColumn)
+        NSLayoutConstraint.activate([railColumn.leadingAnchor.constraint(equalTo:rail.leadingAnchor),railColumn.topAnchor.constraint(equalTo:rail.topAnchor,constant:5)])
+        split.isVertical = true; split.dividerStyle = .thin; split.delegate = self
+        split.addArrangedSubview(side.view); split.addArrangedSubview(body)
+        side.view.setFrameSize(NSSize(width:260,height:600))
+        split.setHoldingPriority(.defaultHigh,forSubviewAt:0)
+        let row = stack([rail,split]); main.place(row); rail.width(49)
+        for v in [rail,split] { v.heightAnchor.constraint(equalTo:row.heightAnchor).isActive = true }
+        body.fill(Palette.canvas); editorHost.fill(Palette.canvas)
+        tabs.orientation = .horizontal; tabs.spacing = 1; tabs.alignment = .centerY
+        tabScroll.documentView = tabs; tabScroll.drawsBackground = true; tabScroll.backgroundColor = Palette.sidebar
+        tabScroll.hasHorizontalScroller = true; tabScroll.scrollerStyle = .overlay; tabScroll.autohidesScrollers = true
+        tabScroll.height(35)
+        let copyPath = ActionButton(icon: "doc.on.doc", tip: "复制相对路径", size: 12) { [weak self] in
+            guard let self, let url = self.breadcrumbURL else { return }
+            self.copyRelativePath(of: url)
+        }
+        copyPath.width(24); copyPath.height(24)
+        let breadcrumb = stack([crumb, copyPath], spacing: 3)
+        breadcrumb.translatesAutoresizingMaskIntoConstraints = false
+        crumbBar.addSubview(breadcrumb)
+        NSLayoutConstraint.activate([
+            breadcrumb.leadingAnchor.constraint(equalTo: crumbBar.leadingAnchor, constant: 6),
+            breadcrumb.trailingAnchor.constraint(lessThanOrEqualTo: crumbBar.trailingAnchor, constant: -6),
+            breadcrumb.centerYAnchor.constraint(equalTo: crumbBar.centerYAnchor)
+        ])
+        crumbBar.height(28); crumbBar.fill(Palette.canvas)
+        let compare = ActionButton("比较版本",tip:"比较磁盘版本和我的编辑") { [weak self] in self?.compareConflict() }
+        compare.contentTintColor = Palette.blue
+        let conflictRow = stack([label("磁盘文件已改变，你的编辑已保留。",12),compare,NSView()],spacing:10)
+        conflictBar.place(conflictRow,inset:6); conflictBar.fill(Palette.rgb(0x41382b)); conflictBar.height(32)
+        let area = stack([tabScroll,crumbBar,conflictBar,editorHost],vertical:true)
+        body.place(area)
+        for v in [tabScroll,crumbBar,conflictBar,editorHost] { v.widthAnchor.constraint(equalTo:area.widthAnchor).isActive = true }
+        welcome = welcomeView()
+        window.contentView?.layoutSubtreeIfNeeded()
+        split.setPosition(260,ofDividerAt:0)
+    }
+    private func welcomeView() -> NSView {
+        let container = NSView()
+        let title = label("CyberPeek",33,color:Palette.text,weight:.medium)
+        let open = ActionButton("  打开文件夹…",icon:"folder",tip:"打开文件夹  ⇧⌘O") { [weak self] in self?.chooseFolder() }
+        open.contentTintColor = Palette.blue
+        let jump = ActionButton("  快速打开文件",icon:"magnifyingglass",tip:"快速打开  ⌘P") { [weak self] in self?.quickOpen() }
+        let search = ActionButton("  在项目中搜索",icon:"text.magnifyingglass",tip:"搜索  ⇧⌘F") { [weak self] in self?.selectSection(.search) }
+        let lines = stack([title,stack([open,label("⇧⌘O",11,color:Palette.muted)],spacing:18),
+                           stack([jump,label("⌘P",11,color:Palette.muted)],spacing:18),
+                           stack([search,label("⇧⌘F",11,color:Palette.muted)],spacing:18)],vertical:true,spacing:16)
+        container.addSubview(lines); lines.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([lines.centerXAnchor.constraint(equalTo:container.centerXAnchor),lines.centerYAnchor.constraint(equalTo:container.centerYAnchor,constant:-18)])
+        return container
+    }
+    func selectSection(_ section: Section) {
+        if side.view.isHidden { toggleSidebar() }
+        for (key,pair) in activity {
+            pair.0.contentTintColor = key == section ? Palette.text : Palette.muted; pair.1.isHidden = key != section
+        }
+        side.switchTo(section)
+        if let current { side.reveal(current.url) }
+        if section == .search { window.makeFirstResponder(side.query) }
+    }
+    func toggleSidebar() { side.view.isHidden.toggle(); split.adjustSubviews(); if !side.view.isHidden { split.setPosition(260,ofDividerAt:0) } }
+    func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat { 170 }
+    func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat { splitView.bounds.width-300 }
+    func chooseFolder() {
+        let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.prompt = "打开"
+        panel.beginSheetModal(for:window) { [weak self] result in
+            if result == .OK, let url = panel.url { self?.openFolder(url) }
+        }
+    }
+    func quickOpen() { if root == nil { chooseFolder() } else { quick.show(in:window) } }
+    func openFolder(_ url: URL) {
+        guard documents.allSatisfy({ confirmClosing($0) }) else { return }
+        queryJob?.cancel(); indexJob?.cancel(); eventTask?.cancel(); repoMonitor = nil; gitMonitor = nil
+        projectVersion += 1; loadVersion += 1; queryVersion += 1
+        root = url.resolvingSymlinksInPath().standardizedFileURL; quick.folder = root; documents = []; targets = [:]; back = []; forward = []; quick.paths = []
+        side.reset(root!); selectSection(.files); show(nil)
+        window.title = "\(url.lastPathComponent) — CyberPeek"; projectButton.title = "  \(url.lastPathComponent)"
+        UserDefaults.standard.set(url.path,forKey:"lastFolder")
+        monitor = WorkspaceMonitor(url:root!) { [weak self] in self?.scheduleRefresh() }
+        refresh()
+    }
+    func scheduleRefresh() {
+        eventTask?.cancel()
+        let item = DispatchWorkItem { [weak self] in self?.refresh() }; eventTask = item
+        DispatchQueue.main.asyncAfter(deadline:.now()+0.22,execute:item)
+    }
+    func refresh() {
+        guard let root else { return }
+        let version = projectVersion
+        indexJob?.cancel()
+        let job = ShellJob(); indexJob = job
+        DispatchQueue.global(qos:.utility).async {
+            let paths = try? WorkspaceSearch.paths(in:root,job:job)
+            DispatchQueue.main.async {
+                guard self.projectVersion == version, self.indexJob === job, let paths else { return }
+                self.quick.paths = paths
+            }
+        }
+        gitVersion += 1; let pass = gitVersion
+        DispatchQueue.global(qos:.utility).async {
+            let result = Result { try GitState.read(root) }
+            DispatchQueue.main.async {
+                guard self.projectVersion == version, self.gitVersion == pass else { return }
+                switch result {
+                case let .success(state):
+                    self.side.git = state; self.branch.stringValue = state.branch
+                    self.watchRepository(state, folder:root)
+                case let .failure(error):
+                    self.side.git = nil
+                    self.side.gitMessage = error.localizedDescription.contains("not a git repository") ? "当前文件夹没有 Git 仓库" : error.localizedDescription
+                    self.branch.stringValue = root.lastPathComponent
+                }
+                if self.side.section == .git { self.side.reload() }
+            }
+        }
+        if side.section == .files { side.reload() }
+        if !side.query.stringValue.isEmpty { search(side.query.stringValue) }
+        checkDisk()
+        if let doc = current, let change = doc.change, change.revision == nil, let repo = side.git?.repo {
+            DispatchQueue.global(qos:.utility).async {
+                let patch = try? GitState(repo:repo).diff(change)
+                DispatchQueue.main.async {
+                    if self.gitVersion == pass, self.current === doc, let patch, doc.text.string != patch { doc.replace(patch) }
+                }
+            }
+        }
+    }
+    private func watchRepository(_ state: GitState, folder: URL) {
+        if repoMonitor == nil, state.repo.path != folder.path {
+            repoMonitor = WorkspaceMonitor(url:state.repo) { [weak self] in self?.scheduleRefresh() }
+        }
+        if gitMonitor == nil, let metadata = state.gitDirectory, !metadata.path.hasPrefix(state.repo.path + "/") {
+            gitMonitor = WorkspaceMonitor(url:metadata) { [weak self] in self?.scheduleRefresh() }
+        }
+    }
+    func search(_ query: String) {
+        queryJob?.cancel(); queryVersion += 1
+        let version = queryVersion
+        side.hits = []; side.searchInfo = query.isEmpty ? "" : "搜索中…"
+        if side.section == .search { side.reload() }
+        guard !query.isEmpty, let root else { return }
+        let job = ShellJob(); queryJob = job
+        DispatchQueue.global(qos:.userInitiated).asyncAfter(deadline:.now()+0.14) {
+            var errorText: String?
+            do {
+                try WorkspaceSearch.find(query,in:root,job:job) { hits in
+                    DispatchQueue.main.async {
+                        guard self.queryVersion == version else { return }
+                        self.side.hits += hits
+                        if self.side.section == .search { self.side.reload() }
+                    }
+                }
+            } catch is CancellationError {} catch { errorText = error.localizedDescription }
+            let problem = errorText
+            DispatchQueue.main.async {
+                guard self.queryVersion == version else { return }
+                let n = self.side.hits.count
+                self.side.searchInfo = problem ?? (n == 1200 ? "已显示前 1200 个匹配" : "\(n) 个匹配")
+                if self.side.section == .search { self.side.reload() }
+            }
+        }
+    }
+    private func loadCommit(_ commit: Commit) {
+        guard let git = side.git else { return }
+        let v = projectVersion
+        DispatchQueue.global().async {
+            let changes = Result { try git.commitFiles(commit.id) }
+            DispatchQueue.main.async {
+                guard self.projectVersion == v else { return }
+                switch changes {
+                case let .success(items): self.side.loadedCommit(commit.id,changes:items)
+                case let .failure(err): self.statusMessage.stringValue = err.localizedDescription
+                }
+            }
+        }
+    }
+    private func openNode(_ node: SideNode, pin: Bool) {
+        switch node.role {
+        case let .file(url): open(.file(url),pin:pin)
+        case let .hit(hit):
+            if let root { open(.file(root.appendingPathComponent(hit.path)),line:hit.line,column:hit.column,length:hit.length,pin:pin) }
+        case let .change(c):
+            if let git = side.git { open(.patch(git.repo,c),pin:pin) }
+        default: break
+        }
+    }
+    func windowShouldClose(_ sender: NSWindow) -> Bool { documents.allSatisfy { confirmClosing($0) } }
+}
+
+private final class ToolbarItems: NSObject, NSToolbarDelegate {
+    let views: [String:NSView]
+    init(views:[String:NSView]) { self.views = views }
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { toolbarDefaultItemIdentifiers(toolbar) }
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [.init("back"),.init("forward"),.flexibleSpace,.init("project"),.flexibleSpace]
+    }
+    func toolbar(_ toolbar: NSToolbar,itemForItemIdentifier id: NSToolbarItem.Identifier,willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        guard let view = views[id.rawValue] else { return nil }
+        let item = NSToolbarItem(itemIdentifier:id); item.view = view; item.label = (view as? NSButton)?.toolTip ?? id.rawValue
+        return item
+    }
+}

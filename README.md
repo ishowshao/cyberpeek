@@ -1,0 +1,45 @@
+# CyberPeek
+
+CyberPeek 是用 Swift 和 AppKit 编写的轻量级 macOS 代码编辑器，适合在 coding agent 改完代码后阅读源码和审阅差异。打开一个文件夹即可浏览、编辑、搜索或审阅 Git 改动。需要 macOS 14 或更高版本。
+
+## 使用
+
+| 操作 | 快捷键 |
+| --- | --- |
+| 打开文件夹 | ⇧⌘O |
+| 打开文件 | ⌘O |
+| 按名称定位文件，支持 `路径:行号` | ⌘P |
+| 当前文件查找 / 下一个匹配 | ⌘F / ⌘G |
+| 工作区关键词搜索 | ⇧⌘F |
+| 资源管理器 / 源代码管理 | ⇧⌘E / ⌃⇧G |
+| 切换侧边栏 | ⌘B |
+| 返回 / 前进 | ⌃− / ⌃⇧− |
+| 保存 / 关闭当前标签 | ⌘S / ⌘W |
+
+单击文件可预览，双击或编辑可固定标签。点击面包屑末尾的复制按钮，或在文件树中右键文件或目录，即可复制相对于工作区根目录的路径。Git 面板分别显示已暂存、未暂存和未跟踪文件，并可展开最近 12 次提交。点击 diff 中的新增行或上下文行，跳转到对应的工作区、暂存区或提交版本。
+
+打开的源码会跟踪磁盘变化。当存在本地编辑时，查看器保留缓冲区并提供版本比较。支持 UTF-8 和带 BOM 的 UTF-16，保存时保留原编码以及普通 LF / CRLF 换行。
+
+Tree-sitter 提供 Swift、JavaScript / JSX、TypeScript / TSX、Python、C、JSON 和 Bash 高亮。其他文本以纯文本显示。单文件上限为 32 MiB，超过 150 万个 UTF-16 单元时使用纯文本。项目搜索遵循 ripgrep 忽略规则，最多显示 1200 个匹配。
+
+## 构建
+
+在 Xcode 中打开 `CyberPeek.xcodeproj` 运行 CyberPeek，也可以在终端执行：
+
+```sh
+xcodebuild -project CyberPeek.xcodeproj -scheme CyberPeek -configuration Release \
+  -derivedDataPath .build build
+open .build/Build/Products/Release/CyberPeek.app
+```
+
+首次构建从 npm 和 ripgrep 官方发布页下载锁定版本并校验摘要，依赖缓存位于 `.vendor`。构建需要完整的 Xcode 和 Python 3。应用自带 ripgrep 和语法解析器，运行时 Git 功能使用 `/usr/bin/git`。
+
+安装后，可以从终端打开当前文件夹：
+
+```sh
+open -a CyberPeek "$PWD"
+```
+
+## 许可证
+
+CyberPeek 以 [GNU General Public License v3.0](LICENSE)（SPDX 标识符 `GPL-3.0-only`）发布。第三方组件保留各自的许可证，构建时会随应用打包。

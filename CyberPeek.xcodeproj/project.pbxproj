@@ -1,0 +1,495 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		1F779168E90997C04FCB506C /* Interface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0EA27A682B99DFD6A63A6371 /* Interface.swift */; };
+		35D6283E4DDDEF6A5F25B38A /* DocumentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93ACEA717C03BF20A59B5602 /* DocumentTests.swift */; };
+		40301348EB65DFAB3EF89CFB /* Editor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 920FA3C9D6ACACDD1B847BC2 /* Editor.swift */; };
+		5E3B445FA25757B8BBC79494 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB3513CB756295F478D367B1 /* main.swift */; };
+		736798FC7C30FA03637F8529 /* Syntax.c in Sources */ = {isa = PBXBuildFile; fileRef = 50FBB6A654A9255F24CB88F9 /* Syntax.c */; };
+		B5B59D3CC649FE8E40037960 /* CyberPeek.icns in Resources */ = {isa = PBXBuildFile; fileRef = 7A88BF9C18210D390FEC5C27 /* CyberPeek.icns */; };
+		BCAC4FD5D3C41BCAFFBCFF9B /* Workbench.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F9893847237EA912766161F /* Workbench.swift */; };
+		BDE08AA518CA3ED1F6CA98D4 /* QuickOpen.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF8CB72B554D9CAFA154B176 /* QuickOpen.swift */; };
+		E1FB9CB9BDBDF5C6563B9602 /* Workspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70E866BCEB5FA285835F880B /* Workspace.swift */; };
+		F267B536AD2ABCEFEA0ABF71 /* Documents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B32D483C25A4E13DFE61400 /* Documents.swift */; };
+		F581292C99AE92ABDDA4372E /* Sidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EC886C43D8314EDD2490844 /* Sidebar.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		C78CB94A03E9BCC7D3785E5D /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 2AD52AABA42C26E032BD0E1D /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 4A8A10B6D00639DE310C7655;
+			remoteInfo = CyberPeek;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		0EA27A682B99DFD6A63A6371 /* Interface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Interface.swift; sourceTree = "<group>"; };
+		1B32D483C25A4E13DFE61400 /* Documents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Documents.swift; sourceTree = "<group>"; };
+		32661D5718159AC5069BD1E9 /* Syntax.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Syntax.h; sourceTree = "<group>"; };
+		50FBB6A654A9255F24CB88F9 /* Syntax.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = Syntax.c; sourceTree = "<group>"; };
+		5F9893847237EA912766161F /* Workbench.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Workbench.swift; sourceTree = "<group>"; };
+		607C95581F13EEC48AB1A502 /* CyberPeek.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CyberPeek.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		70E866BCEB5FA285835F880B /* Workspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Workspace.swift; sourceTree = "<group>"; };
+		789FC141BB520CA331074415 /* CyberPeekTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CyberPeekTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		7A88BF9C18210D390FEC5C27 /* CyberPeek.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = CyberPeek.icns; sourceTree = "<group>"; };
+		920FA3C9D6ACACDD1B847BC2 /* Editor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Editor.swift; sourceTree = "<group>"; };
+		93ACEA717C03BF20A59B5602 /* DocumentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentTests.swift; sourceTree = "<group>"; };
+		9A85CF015D6F4E6BCE0BF234 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		9EC886C43D8314EDD2490844 /* Sidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sidebar.swift; sourceTree = "<group>"; };
+		BB3513CB756295F478D367B1 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		DF8CB72B554D9CAFA154B176 /* QuickOpen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickOpen.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		0C3968D0173613DB2CFDDBB8 /* CyberPeek */ = {
+			isa = PBXGroup;
+			children = (
+				7A88BF9C18210D390FEC5C27 /* CyberPeek.icns */,
+				1B32D483C25A4E13DFE61400 /* Documents.swift */,
+				920FA3C9D6ACACDD1B847BC2 /* Editor.swift */,
+				9A85CF015D6F4E6BCE0BF234 /* Info.plist */,
+				0EA27A682B99DFD6A63A6371 /* Interface.swift */,
+				BB3513CB756295F478D367B1 /* main.swift */,
+				DF8CB72B554D9CAFA154B176 /* QuickOpen.swift */,
+				9EC886C43D8314EDD2490844 /* Sidebar.swift */,
+				50FBB6A654A9255F24CB88F9 /* Syntax.c */,
+				32661D5718159AC5069BD1E9 /* Syntax.h */,
+				5F9893847237EA912766161F /* Workbench.swift */,
+				70E866BCEB5FA285835F880B /* Workspace.swift */,
+			);
+			path = CyberPeek;
+			sourceTree = "<group>";
+		};
+		43AF12192760C0D35EE9726E = {
+			isa = PBXGroup;
+			children = (
+				0C3968D0173613DB2CFDDBB8 /* CyberPeek */,
+				820D66A76D521EC8A96B7838 /* Tests */,
+				A438E800DDEF875125A82442 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		820D66A76D521EC8A96B7838 /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				93ACEA717C03BF20A59B5602 /* DocumentTests.swift */,
+			);
+			path = Tests;
+			sourceTree = "<group>";
+		};
+		A438E800DDEF875125A82442 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				607C95581F13EEC48AB1A502 /* CyberPeek.app */,
+				789FC141BB520CA331074415 /* CyberPeekTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		4A8A10B6D00639DE310C7655 /* CyberPeek */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 040E96119682742E1BF1D5FB /* Build configuration list for PBXNativeTarget "CyberPeek" */;
+			buildPhases = (
+				83665953809E3ABF8BD7C8C9 /* Prepare native dependencies */,
+				542E9092AA9E27DA40768BAC /* Sources */,
+				E046E28BF6767DF3A0E0CFC9 /* Resources */,
+				5DA7062F44ACA2CF7AD68217 /* Embed search helper */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = CyberPeek;
+			packageProductDependencies = (
+			);
+			productName = CyberPeek;
+			productReference = 607C95581F13EEC48AB1A502 /* CyberPeek.app */;
+			productType = "com.apple.product-type.application";
+		};
+		DA9E8DBBB165A947B1FD00C1 /* CyberPeekTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CD0919932E11A5452540527D /* Build configuration list for PBXNativeTarget "CyberPeekTests" */;
+			buildPhases = (
+				908A6996CF76F6CA4E069C8D /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				13511414D6A0B9A3718B0908 /* PBXTargetDependency */,
+			);
+			name = CyberPeekTests;
+			packageProductDependencies = (
+			);
+			productName = CyberPeekTests;
+			productReference = 789FC141BB520CA331074415 /* CyberPeekTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		2AD52AABA42C26E032BD0E1D /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+				};
+			};
+			buildConfigurationList = 0081ACCD39482F2C03C1BAC2 /* Build configuration list for PBXProject "CyberPeek" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 43AF12192760C0D35EE9726E;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = A438E800DDEF875125A82442 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				4A8A10B6D00639DE310C7655 /* CyberPeek */,
+				DA9E8DBBB165A947B1FD00C1 /* CyberPeekTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		E046E28BF6767DF3A0E0CFC9 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B5B59D3CC649FE8E40037960 /* CyberPeek.icns in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		5DA7062F44ACA2CF7AD68217 /* Embed search helper */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Embed search helper";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -eu\ndest=\"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH\"\nmkdir -p \"$dest/Helpers\" \"$dest/Resources\"\ncp \"$SRCROOT/.vendor/rg\" \"$dest/Helpers/rg\"\ncodesign --force --sign \"${EXPANDED_CODE_SIGN_IDENTITY:--}\" \"$dest/Helpers/rg\"\ncp -R \"$SRCROOT/.vendor/Licenses\" \"$dest/Resources/\"\ncp \"$SRCROOT/LICENSE\" \"$dest/Resources/Licenses/CyberPeek-LICENSE\"\n";
+		};
+		83665953809E3ABF8BD7C8C9 /* Prepare native dependencies */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Prepare native dependencies";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "python3 \"$SRCROOT/Scripts/dependencies.py\"";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		542E9092AA9E27DA40768BAC /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F267B536AD2ABCEFEA0ABF71 /* Documents.swift in Sources */,
+				40301348EB65DFAB3EF89CFB /* Editor.swift in Sources */,
+				1F779168E90997C04FCB506C /* Interface.swift in Sources */,
+				BDE08AA518CA3ED1F6CA98D4 /* QuickOpen.swift in Sources */,
+				F581292C99AE92ABDDA4372E /* Sidebar.swift in Sources */,
+				736798FC7C30FA03637F8529 /* Syntax.c in Sources */,
+				BCAC4FD5D3C41BCAFFBCFF9B /* Workbench.swift in Sources */,
+				E1FB9CB9BDBDF5C6563B9602 /* Workspace.swift in Sources */,
+				5E3B445FA25757B8BBC79494 /* main.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		908A6996CF76F6CA4E069C8D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				35D6283E4DDDEF6A5F25B38A /* DocumentTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		13511414D6A0B9A3718B0908 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 4A8A10B6D00639DE310C7655 /* CyberPeek */;
+			targetProxy = C78CB94A03E9BCC7D3785E5D /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		2100D6EE37CFF918CD5C51CC /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		2B1239DDB481EBE09DA10C21 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "-";
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/.vendor/include";
+				INFOPLIST_FILE = CyberPeek/Info.plist;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/.vendor";
+				OTHER_LDFLAGS = "-lSyntax";
+				PRODUCT_BUNDLE_IDENTIFIER = com.hyoldman.cyberpeek;
+				SDKROOT = macosx;
+				SWIFT_OBJC_BRIDGING_HEADER = CyberPeek/Syntax.h;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		4FDB0ADC1F8A5D309D50396E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		57EE10C99CBD6496614DB625 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "-";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.hyoldman.cyberpeek.tests;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/CyberPeek.app/Contents/MacOS/CyberPeek";
+			};
+			name = Release;
+		};
+		A53A26276448548E3E941B9D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "-";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.hyoldman.cyberpeek.tests;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/CyberPeek.app/Contents/MacOS/CyberPeek";
+			};
+			name = Debug;
+		};
+		B9FB5853EBAF7B3F4B3BBB25 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "-";
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/.vendor/include";
+				INFOPLIST_FILE = CyberPeek/Info.plist;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/.vendor";
+				OTHER_LDFLAGS = "-lSyntax";
+				PRODUCT_BUNDLE_IDENTIFIER = com.hyoldman.cyberpeek;
+				SDKROOT = macosx;
+				SWIFT_OBJC_BRIDGING_HEADER = CyberPeek/Syntax.h;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		0081ACCD39482F2C03C1BAC2 /* Build configuration list for PBXProject "CyberPeek" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				2100D6EE37CFF918CD5C51CC /* Debug */,
+				4FDB0ADC1F8A5D309D50396E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		040E96119682742E1BF1D5FB /* Build configuration list for PBXNativeTarget "CyberPeek" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B9FB5853EBAF7B3F4B3BBB25 /* Debug */,
+				2B1239DDB481EBE09DA10C21 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		CD0919932E11A5452540527D /* Build configuration list for PBXNativeTarget "CyberPeekTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A53A26276448548E3E941B9D /* Debug */,
+				57EE10C99CBD6496614DB625 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 2AD52AABA42C26E032BD0E1D /* Project object */;
+}

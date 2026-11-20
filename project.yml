@@ -1,0 +1,66 @@
+name: CyberPeek
+options:
+  deploymentTarget:
+    macOS: "14.0"
+targets:
+  CyberPeek:
+    type: application
+    platform: macOS
+    sources: [CyberPeek]
+    info:
+      path: CyberPeek/Info.plist
+      properties:
+        CFBundleIconFile: CyberPeek.icns
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Source files and folders
+            CFBundleTypeRole: Editor
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [public.text, public.source-code, public.folder, public.json, public.script]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.hyoldman.cyberpeek
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        SWIFT_VERSION: 5.0
+        SWIFT_OBJC_BRIDGING_HEADER: CyberPeek/Syntax.h
+        HEADER_SEARCH_PATHS: "$(SRCROOT)/.vendor/include"
+        LIBRARY_SEARCH_PATHS: "$(SRCROOT)/.vendor"
+        OTHER_LDFLAGS: "-lSyntax"
+        CODE_SIGN_IDENTITY: "-"
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+    preBuildScripts:
+      - name: Prepare native dependencies
+        script: python3 "$SRCROOT/Scripts/dependencies.py"
+        basedOnDependencyAnalysis: false
+    postBuildScripts:
+      - name: Embed search helper
+        script: |
+          set -eu
+          dest="$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH"
+          mkdir -p "$dest/Helpers" "$dest/Resources"
+          cp "$SRCROOT/.vendor/rg" "$dest/Helpers/rg"
+          codesign --force --sign "${EXPANDED_CODE_SIGN_IDENTITY:--}" "$dest/Helpers/rg"
+          cp -R "$SRCROOT/.vendor/Licenses" "$dest/Resources/"
+          cp "$SRCROOT/LICENSE" "$dest/Resources/Licenses/CyberPeek-LICENSE"
+        basedOnDependencyAnalysis: false
+  CyberPeekTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [Tests]
+    dependencies:
+      - target: CyberPeek
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.hyoldman.cyberpeek.tests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: 5.0
+        CODE_SIGN_IDENTITY: "-"
+schemes:
+  CyberPeek:
+    test:
+      targets: [CyberPeekTests]
+    build:
+      targets:
+        CyberPeek: all

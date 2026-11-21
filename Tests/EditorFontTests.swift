@@ -70,11 +70,14 @@ final class EditorFontTests: XCTestCase {
         defer { windows.forEach { $0.orderOut(nil) } }
         let range = (markdown.text.string as NSString).range(of: "加粗斜体")
         markdown.text.setSelectedRange(range)
+        let expectedFamily = NSFont(name: "Menlo", size: 16)?.familyName
+            ?? NSFont.monospacedSystemFont(ofSize: 16, weight: .regular).familyName
         func checkMarkdown(_ points: CGFloat) {
             let styled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
                 guard let font = markdown.text.textStorage?.attribute(.font, at: range.location,
                     effectiveRange: nil) as? NSFont else { return false }
-                return font.pointSize == points && NSFontManager.shared.traits(of: font).contains([.boldFontMask, .italicFontMask])
+                return font.familyName == expectedFamily && font.pointSize == points
+                    && NSFontManager.shared.traits(of: font).contains([.boldFontMask, .italicFontMask])
             }, object: nil)
             XCTAssertEqual(XCTWaiter.wait(for: [styled], timeout: 3), .completed)
         }
@@ -85,8 +88,10 @@ final class EditorFontTests: XCTestCase {
         XCTAssertFalse(markdown.dirty)
         let patchFont = patch.text.textStorage?.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
         XCTAssertEqual(patchFont?.pointSize, 24)
+        XCTAssertEqual(patchFont?.familyName, expectedFamily)
         XCTAssertEqual(patch.text.textStorage?.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor, Palette.green)
         XCTAssertEqual(settings.fonts.lineNumber.pointSize, 22)
+        XCTAssertEqual(settings.fonts.lineNumber.familyName, expectedFamily)
         XCTAssertTrue(plain.dirty)
         XCTAssertEqual(plain.text.string, "草稿!")
         plain.text.undoManager?.undo()
@@ -95,5 +100,6 @@ final class EditorFontTests: XCTestCase {
         empty.text.insertText("新", replacementRange: NSRange(location: 0, length: 0))
         let typed = empty.text.textStorage?.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
         XCTAssertEqual(typed?.pointSize, 24)
+        XCTAssertEqual(typed?.familyName, expectedFamily)
     }
 }

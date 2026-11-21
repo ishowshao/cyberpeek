@@ -16,10 +16,10 @@ final class EditorFontSettings: NSObject {
         init(size: Int) {
             self.size = size
             let points = CGFloat(size)
-            regular = .monospacedSystemFont(ofSize: points, weight: .regular)
-            lineNumber = .monospacedDigitSystemFont(ofSize: points - 2, weight: .regular)
-            let bold = NSFont.monospacedSystemFont(ofSize: points, weight: .bold)
             let manager = NSFontManager.shared
+            regular = NSFont(name: "Menlo-Regular", size: points) ?? .monospacedSystemFont(ofSize: points, weight: .regular)
+            lineNumber = manager.convert(regular, toSize: points - 2)
+            let bold = manager.convert(regular, toHaveTrait: .boldFontMask)
             markdown = [regular, bold, manager.convert(regular, toHaveTrait: .italicFontMask),
                         manager.convert(bold, toHaveTrait: .italicFontMask)]
         }

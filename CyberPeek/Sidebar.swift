@@ -5,6 +5,7 @@ enum Section: String { case files = "资源管理器", search = "搜索", git = 
 final class SideNode {
     enum Role {
         case directory(URL), file(URL, deletion: Change? = nil), group, repository(String), hit(SearchHit), change(URL, Change), commit(URL, Commit), message
+        case untrackedDirectory(URL, URL), changeRange(URL, [Change], Range<Int>, Bool)
     }
     let name: String, key: String
     let role: Role
@@ -13,10 +14,23 @@ final class SideNode {
         self.name = name; self.key = key; self.role = role; self.children = children
     }
     var expandable: Bool {
-        switch role { case .directory,.group,.repository,.commit: return true; default: return false }
+        switch role { case .directory,.untrackedDirectory,.changeRange,.group,.repository,.commit: return true; default: return false }
     }
     func items(in tree: GitFileTree?) -> [SideNode] {
         if let children { return children }
+        switch role {
+        case let .untrackedDirectory(repo, url):
+            if let changes = tree?.untrackedChildren[url.path] {
+                children = Self.changeNodes(changes, repo: repo, shortNames: true)
+            } else {
+                children = [SideNode("正在读取…", key + "|loading", .message)]
+            }
+            return children ?? []
+        case let .changeRange(repo, changes, range, shortNames):
+            children = Self.changeNodes(changes, repo: repo, range: range, shortNames: shortNames)
+            return children ?? []
+        default: break
+        }
         guard case let .directory(url) = role else { return [] }
         let keys: Set<URLResourceKey> = [.isDirectoryKey,.isSymbolicLinkKey]
         let urls = (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: Array(keys))) ?? []
@@ -41,6 +55,31 @@ final class SideNode {
         nodes.sort { $0.expandable == $1.expandable ? $0.name.localizedStandardCompare($1.name) == .orderedAscending : $0.expandable }
         children = nodes
         return nodes
+    }
+
+    static func changeNodes(_ changes: [Change], repo: URL, range: Range<Int>? = nil, shortNames: Bool = false) -> [SideNode] {
+        let range = range ?? changes.indices
+        // Keep even a flat directory with thousands of siblings out of a single outline expansion.
+        let limit = 200
+        if range.count > limit {
+            var size = limit
+            while (range.count - 1) / size >= limit { size *= limit }
+            return stride(from: range.lowerBound, to: range.upperBound, by: size).map { start in
+                let end = min(start + size, range.upperBound)
+                let first = changes[start], last = changes[end-1]
+                let title = "\((first.path as NSString).lastPathComponent) … \((last.path as NSString).lastPathComponent)"
+                return SideNode(title, "\(repo.path)|\(first.area.rawValue)|\(first.revision ?? "")|range|\(first.path)|\(size)",
+                                .changeRange(repo, changes, start..<end, shortNames))
+            }
+        }
+        return changes[range].map { change in
+            let name = shortNames ? (change.path as NSString).lastPathComponent : change.path
+            let key = "\(repo.path)|\(change.area.rawValue)|\(change.revision ?? "")|\(change.path)"
+            if change.isUntrackedDirectory {
+                return SideNode(name, key, .untrackedDirectory(repo, repo.appendingPathComponent(change.path, isDirectory: true)))
+            }
+            return SideNode(name, key, .change(repo, change))
+        }
     }
 }
 
@@ -86,6 +125,7 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
     var onCommit: ((URL, Commit) -> Void)?
     var onFolder: (() -> Void)?
     var onRefresh: (() -> Void)?
+    var onExpandDirectory: (() -> Void)?
     private(set) var section = Section.files
     var folder: URL?
     var git: WorkspaceGit?
@@ -229,6 +269,15 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
             outline.scrollRowToVisible(row)
         }
     }
+    var expandedDirectoryPaths: Set<String> {
+        Set((0..<outline.numberOfRows).compactMap { row in
+            guard let node = outline.item(atRow: row) as? SideNode, outline.isItemExpanded(node) else { return nil }
+            switch node.role {
+            case let .directory(url), let .untrackedDirectory(_, url): return url.path
+            default: return nil
+            }
+        })
+    }
     private var previousSearchGroups = Set<String>()
     private func gitGroups(for state: GitState) -> [SideNode] {
         let repo = state.repo
@@ -236,8 +285,9 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
         for area in [Change.Area.staged, .working, .untracked] {
             let changes = state.changes.filter { $0.area == area }
             if !changes.isEmpty {
-                groups.append(SideNode("\(area.rawValue)  ·  \(changes.count)", "\(repo.path)|\(area.rawValue)", .group,
-                                       children: changes.map { changeNode($0, repo: repo) }))
+                let unit = changes.contains(where: \.isUntrackedDirectory) ? " 项" : ""
+                groups.append(SideNode("\(area.rawValue)  ·  \(changes.count)\(unit)", "\(repo.path)|\(area.rawValue)", .group,
+                                       children: SideNode.changeNodes(changes, repo: repo)))
             }
         }
         if state.changes.isEmpty { groups.append(SideNode("工作区干净", "\(repo.path)|clean", .message)) }
@@ -251,11 +301,8 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
         return groups
     }
 
-    private func changeNode(_ change: Change, repo: URL) -> SideNode {
-        SideNode(change.path, "\(repo.path)|\(change.area.rawValue)|\(change.revision ?? "")|\(change.path)", .change(repo, change))
-    }
     func loadedCommit(_ id: String, repo: URL, changes: [Change]) {
-        commitCache["\(repo.path)|\(id)"] = changes.map { changeNode($0, repo: repo) }
+        commitCache["\(repo.path)|\(id)"] = SideNode.changeNodes(changes, repo: repo)
         if section == .git { reload() }
     }
     func controlTextDidChange(_ obj: Notification) { onQuery?(query.stringValue) }
@@ -263,7 +310,15 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
     func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any { ((item as? SideNode)?.items(in: git?.fileTree) ?? roots)[index] }
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool { (item as? SideNode)?.expandable == true }
     func outlineViewItemDidExpand(_ notification: Notification) {
-        if let node = notification.userInfo?["NSObject"] as? SideNode, case let .commit(repo, commit) = node.role, node.children == nil { onCommit?(repo, commit) }
+        guard let node = notification.userInfo?["NSObject"] as? SideNode else { return }
+        switch node.role {
+        case let .commit(repo, commit) where node.children == nil: onCommit?(repo, commit)
+        case let .directory(url), let .untrackedDirectory(_, url):
+            if let tree = git?.fileTree, tree.untrackedChildren[url.path] == nil, tree.coversUntrackedDirectory(url.path) {
+                onExpandDirectory?()
+            }
+        default: break
+        }
     }
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
         guard let node = item as? SideNode else { return nil }
@@ -289,6 +344,8 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
             if changed { row.toolTip = "\(node.name) · 包含 Git 变更" }
             return row
         case let .repository(branch): return rowView(node.name, icon: "folder", detail: branch, truncatesDetail: true)
+        case .untrackedDirectory: return rowView(node.name, icon: "folder", detail: "U", detailColor: Palette.green)
+        case .changeRange: return rowView(node.name, icon: "list.bullet", color: Palette.muted)
         case .group: return rowView(node.name,heading:true)
         case .message: return rowView(node.name,color:Palette.muted)
         case .hit: return rowView(node.name)

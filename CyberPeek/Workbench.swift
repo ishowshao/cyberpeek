@@ -22,6 +22,8 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     private var gitJob: ShellJob?
     private var queuedGitPaths = Set<String>()
     private var fullGitRefreshQueued = false
+    private var detailRefreshScheduled = false
+    private var indexDirty = true
     private var pendingEventPaths = Set<String>()
     private let branchIcon = NSImageView(image: symbol("point.3.connected.trianglepath.dotted", size: 12) ?? NSImage())
     private struct LineComparison: Equatable {
@@ -53,6 +55,7 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         side.onFolder = { [weak self] in self?.chooseFolder() }
         side.onCopyRelativePath = { [weak self] url in self?.copyRelativePath(of: url) }
         side.onRefresh = { [weak self] in self?.refresh() }
+        side.onExpandDirectory = { [weak self] in self?.requestGitDetails() }
         side.onQuery = { [weak self] in self?.search($0) }
         side.onOpen = { [weak self] node,pin in self?.openNode(node,pin:pin) }
         side.onCommit = { [weak self] repo, commit in self?.loadCommit(commit, repo: repo) }
@@ -173,10 +176,17 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
             if result == .OK, let url = panel.url { self?.openFolder(url) }
         }
     }
-    func quickOpen() { if root == nil { chooseFolder() } else { quick.show(in:window) } }
+    func quickOpen() {
+        guard root != nil else { chooseFolder(); return }
+        quick.show(in: window)
+        indexIfNeeded()
+    }
     func cancelWorkspaceJobs() {
         queryJob?.cancel(); indexJob?.cancel(); gitJob?.cancel(); eventTask?.cancel(); lineJob?.cancel()
         gitJob = nil
+        indexJob = nil
+        indexDirty = true
+        quick.isLoading = false
         queuedGitPaths.removeAll()
         fullGitRefreshQueued = false
         pendingEventPaths.removeAll()
@@ -190,6 +200,7 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         guard documents.allSatisfy({ confirmClosing($0) }) else { return }
         cancelWorkspaceJobs()
         projectVersion += 1; loadVersion += 1; queryVersion += 1
+        if quick.isVisible { quick.dismiss() }
         root = folder; quick.folder = folder; documents = []; targets = [:]; back = []; forward = []; quick.paths = []
         side.reset(folder); selectSection(.files); show(nil)
         window.title = "\(url.lastPathComponent) — CyberPeek"; projectButton.title = "  \(url.lastPathComponent)"
@@ -211,20 +222,44 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         DispatchQueue.main.asyncAfter(deadline:.now()+0.22,execute:item)
     }
     func refresh(changedPaths: Set<String>? = nil) {
-        guard let root else { return }
+        indexDirty = true
+        indexIfNeeded()
+        refreshGit(changedPaths: changedPaths)
+        if !side.query.stringValue.isEmpty { search(side.query.stringValue) }
+        checkDisk()
+    }
+    private func indexIfNeeded() {
+        guard let root, quick.isVisible, indexDirty, indexJob == nil else { return }
         let version = projectVersion
-        indexJob?.cancel()
+        indexDirty = false
+        quick.isLoading = true
         let job = ShellJob(); indexJob = job
         DispatchQueue.global(qos:.utility).async {
             let paths = try? WorkspaceSearch.paths(in:root,job:job)
             DispatchQueue.main.async {
-                guard self.projectVersion == version, self.indexJob === job, let paths else { return }
-                self.quick.paths = paths
+                guard self.projectVersion == version, self.indexJob === job else { return }
+                self.indexJob = nil
+                self.quick.isLoading = false
+                self.quick.paths = paths ?? []
+                self.indexIfNeeded()
             }
         }
-        refreshGit(changedPaths: changedPaths)
-        if !side.query.stringValue.isEmpty { search(side.query.stringValue) }
-        checkDisk()
+    }
+    private var gitDetailDirectories: Set<String> {
+        var directories = side.expandedDirectoryPaths
+        if let doc = current, doc.base != nil { directories.insert(doc.url.deletingLastPathComponent().path) }
+        return directories
+    }
+    private func requestGitDetails() {
+        guard !detailRefreshScheduled, gitJob == nil else { return }
+        detailRefreshScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.detailRefreshScheduled = false
+            guard self.gitJob == nil, let tree = self.side.git?.fileTree,
+                  self.gitDetailDirectories.contains(where: { tree.untrackedChildren[$0] == nil && tree.coversUntrackedDirectory($0) }) else { return }
+            self.refreshGit(changedPaths: [])
+        }
     }
     func refreshGit(changedPaths: Set<String>? = nil) {
         guard let root else { return }
@@ -235,11 +270,12 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
             return
         }
         let previous = side.git
+        let directories = gitDetailDirectories
         let job = ShellJob(); gitJob = job
         let version = projectVersion
         gitVersion += 1; let pass = gitVersion
         DispatchQueue.global(qos:.utility).async {
-            let result = Result { try WorkspaceGit.read(in: root, previous: previous, changedPaths: changedPaths, job: job) }
+            let result = Result { try WorkspaceGit.read(in: root, previous: previous, changedPaths: changedPaths, directories: directories, job: job) }
             DispatchQueue.main.async {
                 guard self.projectVersion == version, self.gitVersion == pass, self.gitJob === job else { return }
                 self.gitJob = nil
@@ -290,6 +326,10 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         if let doc = current, doc.base != nil, let workspace = side.git, let git = workspace.repository(containing: doc.url.path), let root,
            doc.url.pathComponents.starts(with: root.pathComponents) {
             let changes = workspace.fileTree.changes[doc.url.path] ?? []
+            let parent = doc.url.deletingLastPathComponent().path
+            if changes.isEmpty, workspace.fileTree.untrackedChildren[parent] == nil, workspace.fileTree.coversUntrackedDirectory(parent) {
+                requestGitDetails()
+            }
             let staged = changes.first { $0.area == .staged }
             let working = changes.first { $0.area == .working }
             let addedInIndex = staged?.flag == "A" && working?.flag != "A" && working?.flag != "U"

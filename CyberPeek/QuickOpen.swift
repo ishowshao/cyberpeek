@@ -5,6 +5,10 @@ final class QuickOpen: NSObject, NSTableViewDataSource, NSTableViewDelegate, NST
     private let input = NSTextField(), table = NSTableView()
     private var results = [String]()
     var folder: URL?
+    var isVisible: Bool { panel.isVisible }
+    var isLoading = false {
+        didSet { input.placeholderString = isLoading ? "正在索引文件，可继续输入…" : "按名称搜索文件，可附加 :行号" }
+    }
     var paths = [String]() { didSet { if panel.isVisible { filter() } } }
     var onChoose: ((String,Int?) -> Void)?
     private var targetLine: Int?
@@ -65,7 +69,7 @@ final class QuickOpen: NSObject, NSTableViewDataSource, NSTableViewDelegate, NST
                 self.displayedVersion = token
                 self.results = matches; self.table.reloadData()
                 if !matches.isEmpty { self.table.selectRowIndexes(IndexSet(integer:0),byExtendingSelection:false); self.table.scrollRowToVisible(0) }
-                if self.chooseWhenReady { self.chooseWhenReady = false; self.selectResult() }
+                if self.chooseWhenReady, !self.isLoading { self.chooseWhenReady = false; self.selectResult() }
             }
         }
         pending = item; DispatchQueue.global(qos:.userInitiated).async(execute:item)
@@ -77,7 +81,7 @@ final class QuickOpen: NSObject, NSTableViewDataSource, NSTableViewDelegate, NST
     }
     @objc private func selectResult() {
         guard panel.isVisible else { return }
-        guard displayedVersion == version else { chooseWhenReady = true; return }
+        guard displayedVersion == version, !(isLoading && results.isEmpty) else { chooseWhenReady = true; return }
         let index = table.selectedRow
         guard results.indices.contains(index) else { return }
         let result = results[index], line = targetLine

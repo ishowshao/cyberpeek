@@ -18,6 +18,26 @@ final class WorkspaceTests: XCTestCase {
         return view.subviews.flatMap { descendants(type, of: $0) }
     }
 
+    func testQuickOpenIndexPreservesPathsAcrossOutputChunks() throws {
+        let root = try makeTestWorkspace()
+        try ShellJob().run(Tools.git, ["init", "-q"], in: root)
+        let suffix = String(repeating: "文", count: 46) + "\n.js"
+        let names = (0..<1000).map { "\($0) \(suffix)" }
+        for name in names { try Data().write(to: root.appendingPathComponent(name)) }
+        XCTAssertEqual(try WorkspaceSearch.paths(in: root, job: ShellJob()), names.sorted())
+    }
+
+    func testWideChangeListKeepsExpandedGroupWhenFilesArrive() throws {
+        let repo = try makeTestWorkspace()
+        let changes = (0..<401).map { Change(path: "files/\($0).js", oldPath: nil, flag: "U", area: .untracked) }
+        let before = SideNode.changeNodes(Array(changes.dropLast()), repo: repo)
+        let after = SideNode.changeNodes(changes, repo: repo)
+        XCTAssertEqual(before.map(\.key), after.prefix(before.count).map(\.key))
+        XCTAssertEqual(after.count, 3)
+        XCTAssertTrue(after.allSatisfy { $0.children == nil })
+        XCTAssertEqual(after.flatMap { $0.items(in: nil) }.map(\.name), changes.map(\.path))
+    }
+
     @MainActor func testCollapseFoldersClearsNestedExpansionAndSurvivesRefresh() throws {
         let root = try makeTestWorkspace()
         for path in ["App/Models", "Tests/Unit", "Tests/Unopened/Deep"] {
@@ -285,7 +305,9 @@ final class WorkspaceTests: XCTestCase {
 
         let bench = Workbench()
         bench.openFolder(folder, remember: false)
-        defer { bench.cancelWorkspaceJobs() }
+        defer { bench.quick.dismiss(); bench.cancelWorkspaceJobs() }
+        XCTAssertNil(bench.indexJob)
+        bench.quickOpen()
         bench.search("needle")
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             !bench.quick.paths.isEmpty && bench.side.git != nil && !bench.side.hits.isEmpty
@@ -301,5 +323,57 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(try state.commitFiles(commit.id).map(\.path), ["\(name)/file.md"])
         let change = try XCTUnwrap(state.changes.first { $0.area == .working })
         XCTAssertTrue(try state.diff(change).contains("+needle changed"))
+    }
+
+    @MainActor func testUntrackedDirectoriesExpandOnDemandAndFollowIgnoreRules() throws {
+        let root = try makeTestWorkspace()
+        let modules = root.appendingPathComponent("node_modules", isDirectory: true)
+        let package = modules.appendingPathComponent("包 [1]", isDirectory: true)
+        let src = package.appendingPathComponent("index.js")
+        let ignored = package.appendingPathComponent("skip.log")
+        try FileManager.default.createDirectory(at: package, withIntermediateDirectories: true)
+        try ShellJob().run(Tools.git, ["init", "-q"], in: root)
+        try "*.log\n".write(to: root.appendingPathComponent(".gitignore"), atomically: true, encoding: .utf8)
+        try ShellJob().run(Tools.git, ["add", ".gitignore"], in: root)
+        for file in [src, ignored] { try "first\nsecond\n".write(to: file, atomically: true, encoding: .utf8) }
+        let scoped = try GitState.read(repo: root, folder: package, job: ShellJob())
+        XCTAssertEqual(scoped.changes.map(\.path), ["node_modules/包 [1]/index.js"])
+        let bench = Workbench()
+        bench.openFolder(root, remember: false)
+        defer { bench.cancelWorkspaceJobs() }
+        let outline = try XCTUnwrap(descendants(NSOutlineView.self, of: bench.side.view).first)
+        func node(_ name: String) -> SideNode? {
+            (0..<outline.numberOfRows).compactMap { outline.item(atRow: $0) as? SideNode }.first { $0.name == name }
+        }
+        func waitFor(_ f: @escaping () -> Bool, line: UInt = #line) {
+            let expectation = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in f() }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 5), .completed, line: line)
+        }
+        bench.selectSection(.git)
+        waitFor { node("node_modules/") != nil }
+        XCTAssertEqual(bench.side.git?.fileTree.untrackedChildren.count, 0)
+        XCTAssertNil(node("index.js"))
+        // Open directly with the source-control folder collapsed.
+        bench.open(.file(src))
+        waitFor { bench.current?.lineChanges == .added(lines: 2) }
+        XCTAssertNil(bench.side.git?.fileTree.untrackedChildren[modules.path])
+        outline.expandItem(try XCTUnwrap(node("node_modules/")))
+        waitFor { node("包 [1]") != nil }
+        outline.expandItem(try XCTUnwrap(node("包 [1]")))
+        waitFor { node("index.js") != nil }
+        XCTAssertNil(node("skip.log"))
+        let fileNode = try XCTUnwrap(node("index.js"))
+        outline.selectRowIndexes(IndexSet(integer: outline.row(forItem: fileNode)), byExtendingSelection: false)
+        outline.sendAction(outline.doubleAction, to: outline.target)
+        waitFor { bench.current?.isPatch == true && bench.current?.text.string.contains("+second") == true }
+        bench.selectSection(.files)
+        bench.open(.file(ignored))
+        waitFor { bench.current?.url == ignored && node("index.js") != nil && bench.side.git?.fileTree.changes[src.path]?.first?.flag == "U" }
+        XCTAssertTrue(bench.current?.lineChanges.hunks.isEmpty == true)
+        XCTAssertNil(bench.side.git?.fileTree.changes[ignored.path])
+        try "node_modules/\n".write(to: root.appendingPathComponent(".gitignore"), atomically: true, encoding: .utf8)
+        bench.refreshGit()
+        waitFor { bench.side.git?.fileTree.untrackedRoots.isEmpty == true }
+        XCTAssertNil(bench.side.git?.fileTree.changes[src.path])
     }
 }

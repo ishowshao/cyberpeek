@@ -94,8 +94,22 @@ struct SearchHit {
 
 enum WorkspaceSearch {
     static func paths(in root: URL, job: ShellJob) throws -> [String] {
-        let data = try job.run(Tools.rg, Tools.searchFlags + ["--files", "--null"], in: root, success: [0,1])
-        return data.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }.sorted()
+        var paths = [String](), pending = Data()
+        try job.run(Tools.rg, Tools.searchFlags + ["--files", "--null"], in: root, success: [0,1]) { chunk in
+            pending.append(chunk)
+            let consumed = pending.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) -> Int in
+                var start = 0
+                for end in bytes.indices where bytes[end] == 0 {
+                    paths.append(String(decoding: bytes[start..<end], as: UTF8.self))
+                    start = end + 1
+                }
+                return start
+            }
+            pending.removeFirst(consumed)
+            return true
+        }
+        paths.sort()
+        return paths
     }
 
     static func find(_ query: String, in root: URL, job: ShellJob, deliver: @escaping ([SearchHit]) -> Void) throws {
@@ -172,6 +186,7 @@ struct Change: Hashable {
     let flag: String
     let area: Area
     var revision: String? = nil
+    var isUntrackedDirectory: Bool { area == .untracked && path.hasSuffix("/") }
 }
 struct Commit { let id: String; let title: String }
 
@@ -179,10 +194,26 @@ struct GitFileTree {
     private(set) var changes: [String: [Change]] = [:]
     private(set) var changedDirectories: Set<String> = []
     private(set) var deletedChildren: [String: Set<String>] = [:]
+    var untrackedChildren: [String: [Change]] = [:]
+    private(set) var untrackedRoots = Set<String>()
+
+    func coversUntrackedDirectory(_ path: String) -> Bool {
+        guard !untrackedRoots.isEmpty else { return false }
+        var current = path[...]
+        while let slash = current.lastIndex(of: "/") {
+            if untrackedRoots.contains(String(current)) { return true }
+            current = current[..<slash]
+        }
+        return false
+    }
 
     mutating func record(_ change: Change, repo: URL, folder: URL) {
-        var child = repo.appendingPathComponent(change.path, isDirectory: false)
-        changes[child.path, default: []].append(change)
+        var child = repo.appendingPathComponent(change.path, isDirectory: change.isUntrackedDirectory)
+        if change.isUntrackedDirectory {
+            changedDirectories.insert(child.path)
+        } else {
+            changes[child.path, default: []].append(change)
+        }
         while child.path != folder.path {
             let parent = child.deletingLastPathComponent()
             guard parent.path != child.path else { break }
@@ -194,6 +225,11 @@ struct GitFileTree {
             }
             child = parent
         }
+    }
+
+    mutating func recordSummary(_ change: Change, repo: URL, folder: URL) {
+        if change.isUntrackedDirectory { untrackedRoots.insert(repo.appendingPathComponent(change.path, isDirectory: true).path) }
+        record(change, repo: repo, folder: folder)
     }
 }
 
@@ -222,7 +258,9 @@ struct GitState {
             : String(decoding: git(["rev-parse"] + commonArgs).dropLast(), as: UTF8.self)
         let relative = workspaceRelativePath(of: workspace, from: root)
         let pathspec = relative == "." ? [] : ["--", relative]
-        let output = try git(["status", "--porcelain=v1", "-z", "-b", "--untracked-files=all"] + pathspec)
+        // A literal child pathspec makes Git list this level even if the opened folder is itself untracked.
+        let statusScope = relative == "." ? [] : pathspec + [relative + "/.git"]
+        let output = try git(["status", "--porcelain=v1", "-z", "-b", "--untracked-files=normal"] + statusScope)
         let rows = output.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
         var state = GitState(head: head, commonDirectory: common, repo: root, pathspec: pathspec), i = 0
         while i < rows.count {
@@ -252,6 +290,18 @@ struct GitState {
             }
         }
         return state
+    }
+
+    func untrackedChildren(in directory: String, job: ShellJob) throws -> [Change] {
+        let path = workspaceRelativePath(of: URL(fileURLWithPath: directory, isDirectory: true), from: repo)
+        // Select the directory and a literal child so Git opens just this level and folds its descendants.
+        let data = try job.run(Tools.git, ["--literal-pathspecs", "ls-files", "--others", "--exclude-standard",
+                                           "--directory", "--no-empty-directory", "-z", "--", path, path + "/.git"], in: repo)
+        return data.split(separator: 0).compactMap {
+            let name = String(decoding: $0, as: UTF8.self)
+            guard name != path + "/" else { return nil } // An embedded worktree can be opaque to the parent.
+            return Change(path: name, oldPath: nil, flag: "U", area: .untracked)
+        }
     }
 
     func commitFiles(_ commit: String) throws -> [Change] {
@@ -326,7 +376,7 @@ struct WorkspaceGit {
         return Set(touched.values.map(\.commonDirectory))
     }
 
-    static func read(in folder: URL, previous: Self?, changedPaths: Set<String>?, job: ShellJob) throws -> Self {
+    static func read(in folder: URL, previous: Self?, changedPaths: Set<String>?, directories: Set<String> = [], job: ShellJob) throws -> Self {
         let affected = changedPaths.flatMap { previous?.affectedGitDirectories(for: $0) }
         let known = previous?.repositories ?? []
         let cached = Dictionary(uniqueKeysWithValues: known.map { ($0.repo, $0) })
@@ -349,7 +399,23 @@ struct WorkspaceGit {
                 }
             }
             result.repositories.append(state)
-            for change in state.changes { result.fileTree.record(change, repo: root, folder: folder) }
+            for change in state.changes { result.fileTree.recordSummary(change, repo: root, folder: folder) }
+            for directory in directories where state.contains(directory) && result.fileTree.coversUntrackedDirectory(directory) {
+                let children: [Change]
+                if let affected, !affected.contains(state.commonDirectory), let saved = previous?.fileTree.untrackedChildren[directory] {
+                    children = saved
+                } else {
+                    do { children = try state.untrackedChildren(in: directory, job: job) }
+                    catch is CancellationError { throw CancellationError() }
+                    catch {
+                        result.errors.append(error.localizedDescription)
+                        result.fileTree.untrackedChildren[directory] = []
+                        continue
+                    }
+                }
+                result.fileTree.untrackedChildren[directory] = children
+                for change in children { result.fileTree.record(change, repo: root, folder: folder) }
+            }
         }
         return result
     }

@@ -62,6 +62,7 @@ extension Workbench {
         if let old = documents.first(where:{ $0.identity == id }) {
             activate(old); refreshSelectedDocument(); return
         }
+        pendingOpen = target
         statusMessage.stringValue = "正在打开…"
         DispatchQueue.global(qos:.userInitiated).async {
             let result = Result { () throws -> OpenedContent in
@@ -82,6 +83,7 @@ extension Workbench {
             }
             DispatchQueue.main.async {
                 guard self.loadVersion == version else { return }
+                self.pendingOpen = nil
                 self.statusMessage.stringValue = ""
                 do {
                     let doc: DocumentTab
@@ -218,11 +220,48 @@ extension Workbench {
         format.stringValue = (doc.base == nil ? "只读" : "\(codec)     \(doc.base?.crlf == true ? "CRLF" : "LF")") + "     " + (doc.isPatch ? "Diff" : doc.url.pathExtension.uppercased())
     }
     func close(_ doc: DocumentTab) {
-        guard confirmClosing(doc), let index = documents.firstIndex(where:{ $0 === doc }) else { return }
+        guard confirmClosing(doc) else { return }
         loadVersion += 1
+        removeTab(doc)
+    }
+    private func removeTab(_ doc: DocumentTab) {
+        guard let index = documents.firstIndex(where:{ $0 === doc }) else { return }
         documents.remove(at:index); targets.removeValue(forKey:doc.identity)
         if activeDocument === doc { show(documents.isEmpty ? nil : documents[min(index,documents.count-1)]) }
         else { updateTabs() }
+    }
+    func trashFile(_ url: URL) {
+        // Resolve the parent only. Trashing a symlink must move the link itself.
+        let parent = url.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL
+        guard let root, parent.pathComponents.starts(with: root.pathComponents) else { return }
+        let file = parent.appendingPathComponent(url.lastPathComponent, isDirectory: false)
+        func usesFile(_ target: Target) -> Bool {
+            switch target {
+            case let .file(opened):
+                return opened.path == file.path || opened.resolvingSymlinksInPath().path == file.path
+            case let .patch(repo, change) where change.area == .working || change.area == .untracked:
+                return repo.appendingPathComponent(change.path).path == file.path
+            default: return false
+            }
+        }
+        let tabs = documents.filter { targets[$0.identity].map(usesFile) == true }
+        guard tabs.allSatisfy(confirmClosing) else { return }
+        do {
+            let type = try FileManager.default.attributesOfItem(atPath: file.path)[.type] as? FileAttributeType
+            guard type == .typeRegular || type == .typeSymbolicLink else { throw CyberPeekError("请选择要移到废纸篓的文件。") }
+            let remainingBack = back.filter { !usesFile($0.target) }
+            let remainingForward = forward.filter { !usesFile($0.target) }
+            let cancelOpen = pendingOpen.map(usesFile) == true
+            try moveToTrash(file)
+            if cancelOpen { loadVersion += 1 }
+            back = remainingBack
+            forward = remainingForward
+            tabs.forEach(removeTab)
+            statusMessage.stringValue = "已将“\(file.lastPathComponent)”移到废纸篓"
+            refresh(changedPaths: [file.path])
+        } catch {
+            alert(error.localizedDescription)
+        }
     }
     func confirmClosing(_ tab: DocumentTab) -> Bool {
         guard let doc = tab as? Editor, doc.dirty else { return true }

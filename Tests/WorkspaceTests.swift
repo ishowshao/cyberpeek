@@ -151,6 +151,93 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(labels("old"), ["old"])
     }
 
+    @MainActor func testTrashMenuUsesClickedFileAndShowsTrackedDeletion() throws {
+        let fixture = try makeTestWorkspace()
+        let repo = fixture.appendingPathComponent("project", isDirectory: true)
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        let target = repo.appendingPathComponent("要删除 #1.md"), keep = repo.appendingPathComponent("keep.md")
+        let trashed = fixture.appendingPathComponent("trashed.md")
+        try "one".write(to: target, atomically: true, encoding: .utf8)
+        try Data().write(to: keep)
+        try ShellJob().run(Tools.git, ["init", "-q"], in: repo)
+        try ShellJob().run(Tools.git, ["add", "--", "."], in: repo)
+        let bench = Workbench(moveToTrash: { try FileManager.default.moveItem(at: $0, to: trashed) })
+        bench.window.orderFront(nil)
+        bench.openFolder(repo, remember: false)
+        defer { bench.cancelWorkspaceJobs(); bench.window.orderOut(nil) }
+        func waitFor(_ f: @escaping () -> Bool, line: UInt = #line) {
+            let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in f() }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed, line: line)
+        }
+        bench.open(.file(target), pin: true)
+        waitFor { bench.activeDocument?.url == target }
+        bench.open(.file(keep), pin: true)
+        waitFor { bench.activeDocument?.url == keep }
+        let outline = try XCTUnwrap(descendants(NSOutlineView.self, of: bench.side.view).first)
+        func row(_ name: String) throws -> Int {
+            try XCTUnwrap((0..<outline.numberOfRows).first { (outline.item(atRow: $0) as? SideNode)?.name == name })
+        }
+        func menu(_ name: String) throws -> NSMenu {
+            let rect = outline.rect(ofRow: try row(name))
+            let point = outline.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil)
+            let event = try XCTUnwrap(NSEvent.mouseEvent(with: .rightMouseDown, location: point, modifierFlags: [],
+                timestamp: 0, windowNumber: bench.window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+            return try XCTUnwrap(outline.menu(for: event))
+        }
+        XCTAssertNil(try menu(repo.lastPathComponent).item(withTitle: "移到废纸篓"))
+        XCTAssertNotEqual(try row(target.lastPathComponent), outline.selectedRow)
+        let context = try menu(target.lastPathComponent)
+        let trash = try XCTUnwrap(context.item(withTitle: "移到废纸篓"))
+        context.performActionForItem(at: context.index(of: trash))
+        XCTAssertEqual(try String(contentsOf: trashed, encoding: .utf8), "one")
+        XCTAssertEqual(bench.documents.map(\.url), [keep])
+        XCTAssertTrue(bench.back.isEmpty)
+        waitFor { bench.side.git?.fileTree.changes[target.path]?.last?.flag == "D" }
+        XCTAssertNil(try menu(target.lastPathComponent).item(withTitle: "移到废纸篓"))
+    }
+
+    @MainActor func testTrashPreservesDirtyTabOnCancelOrFailure() throws {
+        let root = try makeTestWorkspace(), file = root.appendingPathComponent("draft.txt")
+        try "original".write(to: file, atomically: true, encoding: .utf8)
+        var attempts = 0
+        let bench = Workbench(moveToTrash: { _ in attempts += 1; throw CyberPeekError("废纸篓不可用") })
+        bench.openFolder(root, remember: false)
+        bench.window.orderFront(nil)
+        defer { bench.cancelWorkspaceJobs(); bench.window.orderOut(nil) }
+        bench.open(.file(file))
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in bench.current?.url == file }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed)
+        let doc = try XCTUnwrap(bench.current)
+        doc.text.insertText(" edited", replacementRange: NSRange(location: 8, length: 0))
+        XCTAssertTrue(doc.dirty)
+        for response in [NSApplication.ModalResponse.alertSecondButtonReturn, .alertThirdButtonReturn] {
+            RunLoop.main.perform(inModes: [.modalPanel]) { NSApp.stopModal(withCode: response) }
+            bench.trashFile(file)
+            XCTAssertTrue(bench.current === doc && doc.dirty)
+            XCTAssertEqual(doc.text.string, "original edited")
+            XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "original")
+            XCTAssertEqual(attempts, response == .alertSecondButtonReturn ? 0 : 1)
+        }
+        let sheet = try XCTUnwrap(bench.window.attachedSheet)
+        bench.window.endSheet(sheet)
+    }
+
+    @MainActor func testTrashMovesSymlinkAndCancelsPendingOpenOfThatLink() throws {
+        let root = try makeTestWorkspace(), original = root.appendingPathComponent("original.txt")
+        let link = root.appendingPathComponent("link.txt"), moved = root.appendingPathComponent("trashed-link")
+        try Data().write(to: original)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: original)
+        let bench = Workbench(moveToTrash: { try FileManager.default.moveItem(at: $0, to: moved) })
+        bench.openFolder(root, remember: false)
+        defer { bench.cancelWorkspaceJobs() }
+        bench.open(.file(link))
+        bench.trashFile(link)
+        XCTAssertNil(bench.pendingOpen)
+        XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: moved.path), original.path)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: original.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: link.path))
+    }
+
     @MainActor func testMultipleRepositoriesFollowTheActiveDocument() throws {
         let parent = try makeTestWorkspace()
         // Keep this fixture inside the project without inheriting the project's outer repo.

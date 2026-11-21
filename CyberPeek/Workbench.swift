@@ -44,15 +44,21 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     private var lineJob: ShellJob?
     private var lineBaseline: GitLineBaseline?
     private let lineDiffQueue = DispatchQueue(label: "CyberPeek.gitLineDiff", qos: .utility)
-    var queryJob: ShellJob?, indexJob: ShellJob?, queryVersion = 0, projectVersion = 0, loadVersion = 0
+    var queryJob: ShellJob?, indexJob: ShellJob?, queryVersion = 0, projectVersion = 0
+    var pendingOpen: Target?
+    var loadVersion = 0 { didSet { pendingOpen = nil } }
     var gitVersion = 0, diskVersion = 0
     private var toolbarDelegate: ToolbarItems!
     enum Target { case file(URL), patch(URL,Change), blob(URL,String,String) }
     struct Location { let target: Target; let line: Int; let column: Int }
     var targets: [String:Target] = [:], back = [Location](), forward = [Location]()
     var welcome: NSView!
-    init(pathPasteboard: NSPasteboard = .general) {
+    let moveToTrash: (URL) throws -> Void
+    init(pathPasteboard: NSPasteboard = .general, moveToTrash: @escaping (URL) throws -> Void = {
+        try FileManager.default.trashItem(at: $0, resultingItemURL: nil)
+    }) {
         self.pathPasteboard = pathPasteboard
+        self.moveToTrash = moveToTrash
         super.init()
         window.delegate = self; window.minSize = NSSize(width:740,height:420)
         window.title = "CyberPeek"; window.titleVisibility = .hidden; window.isReleasedWhenClosed = false
@@ -61,6 +67,7 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         setupToolbar(); build()
         side.onFolder = { [weak self] in self?.chooseFolder() }
         side.onCopyRelativePath = { [weak self] url in self?.copyRelativePath(of: url) }
+        side.onTrashFile = { [weak self] url in self?.trashFile(url) }
         side.onRefresh = { [weak self] in self?.refresh() }
         side.onExpandDirectory = { [weak self] in self?.requestGitDetails() }
         side.onQuery = { [weak self] in self?.search($0) }

@@ -86,6 +86,7 @@ final class SideNode {
 private final class FileOutline: NSOutlineView {
     var activateSelection: (() -> Void)?
     var onCopyRelativePath: ((URL) -> Void)?
+    var onTrashFile: ((URL) -> Void)?
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let row = row(at: convert(event.locationInWindow, from: nil))
@@ -100,11 +101,21 @@ private final class FileOutline: NSOutlineView {
         item.target = self
         item.image = symbol("doc.on.doc", size: 13)
         item.representedObject = url
+        if case .file(_, deletion: nil) = node.role {
+            menu.addItem(.separator())
+            let trash = menu.addItem(withTitle: "移到废纸篓", action: #selector(trashFile(_:)), keyEquivalent: "")
+            trash.target = self
+            trash.image = symbol("trash", size: 13)
+            trash.representedObject = url
+        }
         return menu
     }
 
     @objc private func copyPath(_ sender: NSMenuItem) {
         if let url = sender.representedObject as? URL { onCopyRelativePath?(url) }
+    }
+    @objc private func trashFile(_ sender: NSMenuItem) {
+        if let url = sender.representedObject as? URL { onTrashFile?(url) }
     }
 
     override func keyDown(with event: NSEvent) {
@@ -120,6 +131,9 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
     var onOpen: ((SideNode, Bool) -> Void)?
     var onCopyRelativePath: ((URL) -> Void)? {
         didSet { outline.onCopyRelativePath = onCopyRelativePath }
+    }
+    var onTrashFile: ((URL) -> Void)? {
+        didSet { outline.onTrashFile = onTrashFile }
     }
     var onQuery: ((String) -> Void)?
     var onCommit: ((URL, Commit) -> Void)?

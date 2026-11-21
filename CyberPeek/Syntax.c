@@ -1,9 +1,4 @@
-#include "Syntax.h"
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdocumentation-deprecated-sync"
-#include "api.h"
-#pragma clang diagnostic pop
-#include <stdbool.h>
+#include "SyntaxInternal.h"
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
@@ -13,13 +8,14 @@ LANG(swift); LANG(javascript); LANG(typescript); LANG(tsx); LANG(json); LANG(pyt
 
 struct VSParser {
     TSParser *parser;
+    VSMarkdown *markdown;
     TSTree *tree;
     uint16_t *text;
     uint32_t length, count, capacity;
     VSToken *tokens;
 };
 
-VSParser *vs_create(const char *ext) {
+const TSLanguage *vs_code_language(const char *ext) {
     const TSLanguage *lang = NULL;
     if (!strcmp(ext,"swift")) lang = tree_sitter_swift();
     else if (!strcmp(ext,"js") || !strcmp(ext,"jsx") || !strcmp(ext,"mjs") || !strcmp(ext,"cjs")) lang = tree_sitter_javascript();
@@ -29,17 +25,27 @@ VSParser *vs_create(const char *ext) {
     else if (!strcmp(ext,"json")) lang = tree_sitter_json();
     else if (!strcmp(ext,"c") || !strcmp(ext,"h")) lang = tree_sitter_c();
     else if (!strcmp(ext,"sh") || !strcmp(ext,"bash")) lang = tree_sitter_bash();
+    return lang;
+}
+
+VSParser *vs_create(const char *ext) {
+    bool markdown = !strcmp(ext,"md") || !strcmp(ext,"markdown");
+    const TSLanguage *lang = markdown ? tree_sitter_markdown() : vs_code_language(ext);
     if (!lang) return NULL;
     VSParser *p = calloc(1,sizeof(*p));
     p->parser = ts_parser_new();
     if (!ts_parser_set_language(p->parser,lang)) { vs_destroy(p); return NULL; }
+    if (markdown && !(p->markdown = vs_markdown_new())) { vs_destroy(p); return NULL; }
     return p;
 }
+
+bool vs_is_markdown(const VSParser *p) { return p && p->markdown; }
 
 void vs_destroy(VSParser *p) {
     if (!p) return;
     ts_tree_delete(p->tree);
     ts_parser_delete(p->parser);
+    vs_markdown_delete(p->markdown);
     free(p->text); free(p->tokens); free(p);
 }
 
@@ -70,8 +76,41 @@ static int token_color(TSNode node) {
     return 0;
 }
 
-const VSToken *vs_highlight(VSParser *p, const uint16_t *s, uint32_t n, uint32_t *count) {
+static void append_token(void *context, uint32_t start, uint32_t end, uint8_t color, uint8_t traits) {
+    VSParser *p = context;
+    if (p->count == p->capacity) {
+        p->capacity = p->capacity ? p->capacity*2 : 256;
+        p->tokens = realloc(p->tokens, p->capacity * sizeof(VSToken));
+    }
+    p->tokens[p->count++] = (VSToken){start, end-start, color, traits};
+}
+
+void vs_walk_code(TSNode root, VSEmit emit, void *context) {
+    TSTreeCursor cursor = ts_tree_cursor_new(root);
+    for (;;) {
+        TSNode node = ts_tree_cursor_current_node(&cursor);
+        int color = token_color(node);
+        if (color) {
+            emit(context, ts_node_start_byte(node)/2, ts_node_end_byte(node)/2, color, 0);
+        } else if (ts_tree_cursor_goto_first_child(&cursor)) continue;
+        while (!ts_tree_cursor_goto_next_sibling(&cursor)) {
+            if (!ts_tree_cursor_goto_parent(&cursor)) {
+                ts_tree_cursor_delete(&cursor);
+                return;
+            }
+        }
+    }
+}
+
+const VSToken *vs_highlight(VSParser *p, const uint16_t *source, uint32_t length, uint32_t *count) {
     *count=0;
+    // The Markdown block grammar needs a line ending to finish some blocks at EOF.
+    uint32_t n = length;
+    uint16_t *s = malloc((length + 2) * sizeof(*s));
+    if (!s) return NULL;
+    if (length) memcpy(s, source, length * sizeof(*s));
+    if (p->markdown && length && s[length-1] != '\n') s[n++] = '\n';
+    s[n] = 0;
     if (p->tree) {
         uint32_t a=0, old=p->length, end=n;
         while (a<old && a<end && p->text[a]==s[a]) a++;
@@ -82,28 +121,12 @@ const VSToken *vs_highlight(VSParser *p, const uint16_t *s, uint32_t n, uint32_t
     }
     TSTree *tree=ts_parser_parse_string_encoding(p->parser,p->tree,(const char *)s,n*2,TSInputEncodingUTF16LE);
     ts_tree_delete(p->tree); p->tree=tree;
-    p->text=realloc(p->text,(n+1)*2);
-    if (n) memcpy(p->text,s,n*2);
+    free(p->text); p->text=s;
     p->length=n; p->count=0;
     if (!tree) return NULL;
-    TSTreeCursor cursor=ts_tree_cursor_new(ts_tree_root_node(tree));
-    for (;;) {
-        TSNode node=ts_tree_cursor_current_node(&cursor);
-        int color=token_color(node);
-        if (color) {
-            if (p->count==p->capacity) {
-                p->capacity=p->capacity ? p->capacity*2 : 256;
-                p->tokens=realloc(p->tokens,p->capacity*sizeof(VSToken));
-            }
-            uint32_t start=ts_node_start_byte(node)/2;
-            p->tokens[p->count++]=(VSToken){start,ts_node_end_byte(node)/2-start,color};
-        } else if (ts_tree_cursor_goto_first_child(&cursor)) continue;
-        while (!ts_tree_cursor_goto_next_sibling(&cursor)) {
-            if (!ts_tree_cursor_goto_parent(&cursor)) goto done;
-        }
-    }
-done:
-    ts_tree_cursor_delete(&cursor);
+    TSNode root = ts_tree_root_node(tree);
+    if (p->markdown) vs_markdown_highlight(p->markdown,root,s,n,length,append_token,p);
+    else vs_walk_code(root,append_token,p);
     *count=p->count;
     return p->tokens;
 }

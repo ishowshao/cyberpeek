@@ -35,6 +35,7 @@ struct DiskText {
 final class SyntaxWorker {
     let queue = DispatchQueue(label: "CyberPeek.syntax", qos: .userInitiated)
     private let parser: OpaquePointer?
+    var isMarkdown: Bool { vs_is_markdown(parser) }
     init(ext: String) { parser = vs_create(ext) }
     deinit { vs_destroy(parser) }
     func parse(_ source: String, completion: @escaping ([VSToken]) -> Void) {
@@ -240,6 +241,10 @@ final class Editor: NSObject, NSTextViewDelegate {
         storage.beginEditing()
         defer { storage.endEditing() }
         storage.addAttribute(.foregroundColor,value:Palette.text,range:target)
+        if worker.isMarkdown {
+            storage.addAttribute(.font, value: Palette.code, range: target)
+            storage.removeAttribute(.strikethroughStyle, range: target)
+        }
         if isPatch {
             storage.removeAttribute(.backgroundColor,range:target)
             let ns = storage.string as NSString
@@ -262,7 +267,15 @@ final class Editor: NSObject, NSTextViewDelegate {
         for token in tokens[low...] {
             if Int(token.start) >= NSMaxRange(target) { break }
             let range = NSIntersectionRange(target,NSRange(location:Int(token.start),length:Int(token.length)))
-            if range.length > 0 { storage.addAttribute(.foregroundColor,value:Palette.syntax[Int(token.color)],range:range) }
+            guard range.length > 0 else { continue }
+            storage.addAttribute(.foregroundColor, value: Palette.syntax[Int(token.color)], range: range)
+            let fontIndex = Int(token.traits) & (VSBold | VSItalic)
+            if fontIndex != 0 {
+                storage.addAttribute(.font, value: Palette.markdownFonts[fontIndex], range: range)
+            }
+            if Int(token.traits) & VSStrike != 0 {
+                storage.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: range)
+            }
         }
     }
     private func patchTargetLine() -> Int? {

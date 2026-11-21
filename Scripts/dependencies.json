@@ -5,6 +5,11 @@
     "sha512:9ab70476462d1dfacad40e9fb373ba171901a344228395d45ea1e1c54390bb46e63e8d34405e17692c7879da5acdd1f0c674828e518a1a022a59d68de1dbd32c"
   ],
   [
+    "tree-sitter-markdown",
+    "https://github.com/tree-sitter-grammars/tree-sitter-markdown/releases/download/v0.5.4/tree-sitter-markdown.tar.gz",
+    "sha256:3c71744d49d9fb850057d59d1eb27269873eb16beb9f71bd6f3d7f6fa901660c"
+  ],
+  [
     "tree-sitter-swift",
     "https://registry.npmjs.org/tree-sitter-swift/-/tree-sitter-swift-0.7.1.tgz",
     "sha512:a6778a553b866a6681b2aaaa7c1f41bcd42392dce1ff42153d1e788cb07916afc94c34306077745a8ea95726798c06296f3b73abeac9feba4bf6bbb14e64a82b"

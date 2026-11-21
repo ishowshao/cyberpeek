@@ -20,7 +20,7 @@ CyberPeek 是用 Swift 和 AppKit 编写的轻量级 macOS 代码编辑器，适
 
 打开的源码会跟踪磁盘变化。当存在本地编辑时，查看器保留缓冲区并提供版本比较。支持 UTF-8 和带 BOM 的 UTF-16，保存时保留原编码以及普通 LF / CRLF 换行。
 
-Tree-sitter 提供 Swift、JavaScript / JSX、TypeScript / TSX、Python、C、JSON 和 Bash 高亮。其他文本以纯文本显示。单文件上限为 32 MiB，超过 150 万个 UTF-16 单元时使用纯文本。项目搜索遵循 ripgrep 忽略规则，最多显示 1200 个匹配。
+Tree-sitter 提供 Markdown、Swift、JavaScript / JSX、TypeScript / TSX、Python、C、JSON 和 Bash 高亮。打开 `.md` 或 `.markdown` 文件时，编辑器会突出显示标题、强调、链接、列表、任务框、表格和行内代码。围栏代码块可以按标注的编程语言高亮。其他文本以纯文本显示。单文件上限为 32 MiB，超过 150 万个 UTF-16 单元时使用纯文本。项目搜索遵循 ripgrep 忽略规则，最多显示 1200 个匹配。
 
 ## 构建
 
@@ -32,7 +32,7 @@ xcodebuild -project CyberPeek.xcodeproj -scheme CyberPeek -configuration Release
 open .build/Build/Products/Release/CyberPeek.app
 ```
 
-首次构建从 npm 和 ripgrep 官方发布页下载锁定版本并校验摘要，依赖缓存位于 `.vendor`。构建需要完整的 Xcode 和 Python 3。应用自带 ripgrep 和语法解析器，运行时 Git 功能使用 `/usr/bin/git`。
+首次构建从 npm 和上游 GitHub 发布页下载锁定版本并校验摘要，依赖缓存位于 `.vendor`。构建需要完整的 Xcode 和 Python 3。应用自带 ripgrep 和语法解析器，运行时 Git 功能使用 `/usr/bin/git`。
 
 安装后，可以从终端打开当前文件夹：
 

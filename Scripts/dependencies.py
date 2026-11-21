@@ -29,7 +29,9 @@ def fetch(item):
         extracted = Path(tmp) / "unpacked"
         extracted.mkdir()
         subprocess.run(["/usr/bin/tar", "-xf", archive, "-C", extracted], check=True)
-        next(extracted.iterdir()).rename(dest)
+        entries = list(extracted.iterdir())
+        root = entries[0] if len(entries) == 1 and entries[0].is_dir() else extracted
+        root.rename(dest)
     return name, dest
 
 def run(*args):
@@ -52,7 +54,8 @@ for arch in ARCHS:
         if name.startswith("rg-") or name == "tree-sitter":
             continue
         for file in path.rglob("src/parser.c"):
-            lang = file.parent.parent.name if name.endswith("typescript") else name
+            grammar = file.parent.parent
+            lang = name if grammar == path else grammar.name
             for src in [file, file.with_name("scanner.c")]:
                 if src.exists():
                     jobs.append((lang + "-" + src.stem, src))

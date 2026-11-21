@@ -16,6 +16,19 @@ final class DocumentTests: XCTestCase {
         return (editor, window)
     }
 
+    @MainActor func testScrollingKeepsOverlayStyleWhenAppKitRequestsLegacyScrollers() throws {
+        let (editor, window) = try showText(String(repeating: String(repeating: "x", count: 200) + "\n", count: 60))
+        defer { window.orderOut(nil) }
+        let list = resultScroll(NSTableView())
+        for scroll in [editor.scroll as NSScrollView, list] {
+            XCTAssertEqual(scroll.scrollerStyle, .overlay)
+            scroll.scrollerStyle = .legacy
+            XCTAssertEqual(scroll.scrollerStyle, .overlay)
+            XCTAssertEqual(scroll.verticalScroller?.scrollerStyle, .overlay)
+        }
+        XCTAssertEqual(editor.scroll.horizontalScroller?.scrollerStyle, .overlay)
+    }
+
     @MainActor func testFirstScreenLeavesDistantTextUnlaid() throws {
         let source = String(repeating: "A line of text\n", count: 8_000)
         let (editor, window) = try showText(source)

@@ -77,9 +77,25 @@ func kindIcon(_ path: String) -> (String, NSColor) {
     default: return ("doc", Palette.muted)
     }
 }
+final class OverlayScrollView: NSScrollView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        scrollerStyle = .overlay
+        autohidesScrollers = true
+    }
+
+    required init?(coder: NSCoder) { fatalError("OverlayScrollView is created programmatically") }
+
+    // AppKit reapplies the system style when the active pointing device changes.
+    override var scrollerStyle: NSScroller.Style {
+        get { super.scrollerStyle }
+        set { super.scrollerStyle = .overlay }
+    }
+}
+
 func resultScroll(_ table: NSView) -> NSScrollView {
-    let scroll = NSScrollView()
-    scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true
+    let scroll = OverlayScrollView()
+    scroll.hasVerticalScroller = true
     scroll.drawsBackground = false
     scroll.documentView = table
     return scroll

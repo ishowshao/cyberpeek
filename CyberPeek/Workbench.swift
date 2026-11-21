@@ -4,7 +4,7 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     let window = NSWindow(contentRect: NSRect(x:0,y:0,width:1180,height:748), styleMask:[.titled,.closable,.miniaturizable,.resizable], backing:.buffered,defer:false)
     let side = Sidebar(), quick = QuickOpen()
     let split = NSSplitView(), rail = NSView(), body = NSView(), editorHost = NSView()
-    let tabs = NSStackView(), tabScroll = NSScrollView()
+    let tabs = NSStackView(), tabScroll = OverlayScrollView()
     let crumb = label("",11,color:Palette.muted), branch = label("",11), position = label("",11), format = label("",11)
     let statusMessage = label("",11,color:Palette.muted)
     let conflictBar = NSView(), crumbBar = NSView()
@@ -87,7 +87,7 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         body.fill(Palette.canvas); editorHost.fill(Palette.canvas)
         tabs.orientation = .horizontal; tabs.spacing = 1; tabs.alignment = .centerY
         tabScroll.documentView = tabs; tabScroll.drawsBackground = true; tabScroll.backgroundColor = Palette.sidebar
-        tabScroll.hasHorizontalScroller = true; tabScroll.scrollerStyle = .overlay; tabScroll.autohidesScrollers = true
+        tabScroll.hasHorizontalScroller = true
         tabScroll.height(35)
         let copyPath = ActionButton(icon: "doc.on.doc", tip: "复制相对路径", size: 12) { [weak self] in
             guard let self, let url = self.breadcrumbURL else { return }

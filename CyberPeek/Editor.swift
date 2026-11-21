@@ -105,7 +105,7 @@ private final class Gutter: NSView {
 final class Editor: NSObject, NSTextViewDelegate {
     let view = NSView()
     let text = SourceTextView(usingTextLayoutManager: true)
-    let scroll = NSScrollView()
+    let scroll = OverlayScrollView()
     private let gutter = Gutter()
     private lazy var gutterWidth = gutter.widthAnchor.constraint(equalToConstant: 54)
     fileprivate let fontSettings: EditorFontSettings
@@ -152,7 +152,7 @@ final class Editor: NSObject, NSTextViewDelegate {
         text.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         text.textContainer?.widthTracksTextView = false
         scroll.documentView = text; scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = true
-        scroll.autohidesScrollers = true; scroll.backgroundColor = Palette.canvas
+        scroll.backgroundColor = Palette.canvas
         gutter.translatesAutoresizingMaskIntoConstraints = false; scroll.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(gutter); view.addSubview(scroll)
         NSLayoutConstraint.activate([gutter.leadingAnchor.constraint(equalTo: view.leadingAnchor), gutterWidth,

@@ -2,6 +2,67 @@ import XCTest
 @testable import CyberPeek
 
 final class DocumentTests: XCTestCase {
+    @MainActor private func showText(_ source: String) throws -> (Editor, NSWindow) {
+        let file = try makeTestWorkspace().appendingPathComponent("sample.txt")
+        let disk = try DiskText(Data(source.utf8))
+        let editor = Editor(url: file, identity: file.path, title: file.lastPathComponent, source: source, disk: disk)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 400),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = editor.view
+        window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(editor.text)
+        editor.view.layoutSubtreeIfNeeded()
+        window.displayIfNeeded()
+        return (editor, window)
+    }
+
+    @MainActor func testFirstScreenLeavesDistantTextUnlaid() throws {
+        let source = String(repeating: "A line of text\n", count: 8_000)
+        let (editor, window) = try showText(source)
+        defer { window.orderOut(nil) }
+        let layout = try XCTUnwrap(editor.text.textLayoutManager)
+        let content = try XCTUnwrap(layout.textContentManager)
+        layout.textViewportLayoutController.layoutViewport()
+        XCTAssertEqual(layout.textLayoutFragment(for: content.documentRange.location)?.state, .layoutAvailable)
+        let middle = try XCTUnwrap(content.location(content.documentRange.location, offsetBy: source.utf16.count / 2))
+        XCTAssertNotEqual(layout.textLayoutFragment(for: middle)?.state, .layoutAvailable)
+    }
+
+    @MainActor func testScrolledSelectionAndMarkedTextUseVisibleCoordinates() throws {
+        let precedingLines = String(repeating: "短行\n", count: 2_000)
+        let prefix = String(repeating: "a", count: 150) + "🍓"
+        let source = precedingLines + prefix + "目标\n"
+        let (editor, window) = try showText(source)
+        defer { window.orderOut(nil) }
+        let text = editor.text
+        let target = (source as NSString).range(of: "目标")
+        editor.go(2_001, column: prefix.utf16.count, length: target.length)
+        XCTAssertEqual(text.selectedRange(), target)
+        XCTAssertEqual(editor.cursor.line, 2_001)
+
+        // The input method requests a screen rect; mouse hit-testing uses view coordinates.
+        func checkGeometry(_ range: NSRange) {
+            let rect = text.firstRect(forCharacterRange: range, actualRange: nil)
+            let point = text.convert(window.convertPoint(fromScreen: NSPoint(x: rect.minX + 1, y: rect.midY)), from: nil)
+            XCTAssertGreaterThan(rect.height, 0)
+            XCTAssertTrue(text.visibleRect.contains(point))
+            XCTAssertEqual(text.characterIndexForInsertion(at: point), range.location)
+        }
+        checkGeometry(target)
+        XCTAssertGreaterThan(editor.scroll.contentView.bounds.minX, 0)
+        XCTAssertGreaterThan(editor.scroll.contentView.bounds.minY, 0)
+
+        text.setMarkedText("拼音", selectedRange: NSRange(location: 2, length: 0), replacementRange: target)
+        XCTAssertEqual(text.markedRange(), target)
+        checkGeometry(text.markedRange())
+        text.insertText("中文", replacementRange: text.markedRange())
+        XCTAssertFalse(text.hasMarkedText())
+        XCTAssertTrue(text.string.hasSuffix("中文\n"))
+
+        editor.go(1)
+        checkGeometry(NSRange(location: 0, length: 1))
+    }
+
     @MainActor func testCopyRelativePathFromBreadcrumbAndOtherTreeRow() throws {
         let root = try makeTestWorkspace()
         let folder = root.appendingPathComponent("源码 目录")

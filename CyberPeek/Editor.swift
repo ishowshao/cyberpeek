@@ -54,6 +54,13 @@ final class SyntaxWorker {
 final class SourceTextView: NSTextView {
     private let localUndo = UndoManager()
     override var undoManager: UndoManager? { localUndo }
+
+    // Source text starts at the top-left inset. Asking AppKit for the used text
+    // bounds here would lay out offscreen paragraphs just to position the first one.
+    override var textContainerOrigin: NSPoint {
+        NSPoint(x: textContainerInset.width, y: textContainerInset.height)
+    }
+
     var lineActivated: (() -> Void)?
     override func mouseDown(with event: NSEvent) {
         super.mouseDown(with: event)

@@ -28,6 +28,36 @@ final class DocumentTests: XCTestCase {
         XCTAssertNotEqual(layout.textLayoutFragment(for: middle)?.state, .layoutAvailable)
     }
 
+    @MainActor func testOffscreenLinesDoNotChangeFirstLineNumber() throws {
+        func firstLineNumber(lineCount: Int) throws -> Data {
+            let folder = try makeTestWorkspace()
+            let file = folder.appendingPathComponent("Sample.swift")
+            // Long lines make the horizontal scroller appear while first-screen layout is settling.
+            let lines = (0..<lineCount).map { line in
+                let value = String(repeating: "x", count: line.isMultiple(of: 10) ? 160 : 20)
+                return "let v = \"\(value)\""
+            }
+            try ("import AppKit\n" + lines.joined(separator: "\n")).write(to: file, atomically: true, encoding: .utf8)
+            let bench = Workbench()
+            defer { bench.cancelWorkspaceJobs(); bench.window.orderOut(nil) }
+            bench.window.makeKeyAndOrderFront(nil)
+            bench.openFolder(folder, remember: false)
+            bench.open(.file(file))
+            let painted = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                bench.current?.text.textStorage?.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == Palette.syntax[4]
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [painted], timeout: 3), .completed)
+            let editor = try XCTUnwrap(bench.current)
+            let top = editor.scroll.frame.maxY - editor.text.textContainerInset.height
+            let rect = NSRect(x: 0, y: top - 20, width: editor.scroll.frame.minX, height: 20)
+            let bitmap = try XCTUnwrap(editor.view.bitmapImageRepForCachingDisplay(in: rect))
+            editor.view.cacheDisplay(in: rect, to: bitmap)
+            return try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        }
+        let short = try firstLineNumber(lineCount: 3)
+        XCTAssertEqual(try firstLineNumber(lineCount: 253), short)
+    }
+
     @MainActor func testScrolledSelectionAndMarkedTextUseVisibleCoordinates() throws {
         let precedingLines = String(repeating: "短行\n", count: 2_000)
         let prefix = String(repeating: "a", count: 150) + "🍓"

@@ -86,9 +86,13 @@ private final class Gutter: NSView {
         let height = ceil(("0" as NSString).size(withAttributes: attrs).height)
         let origin = owner.text.textContainerOrigin.y - owner.scroll.contentView.bounds.origin.y
         manager.enumerateTextLayoutFragments(from: visible.location, options: []) { fragment in
+            let location = fragment.rangeInElement.location
+            // Unlaid fragments can have a zero frame, even when they are far below the viewport.
+            guard location.compare(visible.endLocation) != .orderedDescending else { return false }
+            guard fragment.state == .layoutAvailable else { return true }
             let y = origin + fragment.layoutFragmentFrame.minY
             if y > self.bounds.maxY { return false }
-            let index = content.offset(from: content.documentRange.location, to: fragment.rangeInElement.location)
+            let index = content.offset(from: content.documentRange.location, to: location)
             let line = owner.lineNumber(at: index)
             let number = "\(line)" as NSString
             let lineHeight = fragment.textLineFragments.first?.typographicBounds.height ?? height

@@ -1,0 +1,595 @@
+{
+  "commit": "89f87bd569a93e441363c3112605eb34dd9a3991",
+  "release_sha256": "2abe1c2ded472590d23b1465b984cb3e70288823fc3b3a3632c55c7c67fb0bb3",
+  "subject": "2 MiB、126,532 行纯文本的常驻内存与瞬时峰值",
+  "method": "同一 Mac 的单独应用进程，每次打开工作区内的同一个 .txt。安装版使用 vmmap、heap 和 footprint 测量；内存峰值在另外的新进程中达到阈值时暂停并取样。诊断副本用相同源码、ARM64 Release 优化和解析库，正文字符数经过验证。A/B 逻辑只在该诊断副本生效。",
+  "files": {
+    "tiny.txt": {
+      "bytes": 10,
+      "lines": 1
+    },
+    "fewer-lines.txt": {
+      "bytes": 2097191,
+      "lines": 3955
+    },
+    "many-lines.txt": {
+      "bytes": 2097191,
+      "lines": 126532
+    }
+  },
+  "installed": {
+    "tiny.txt": {
+      "seconds": 5.998,
+      "phys_footprint_mib": 37.517,
+      "peak_mib": 267.439
+    },
+    "fewer-lines.txt": {
+      "seconds": 5.994,
+      "phys_footprint_mib": 179.267,
+      "peak_mib": 417.595
+    },
+    "many-lines.txt": {
+      "seconds": 5.995,
+      "phys_footprint_mib": 312.595,
+      "peak_mib": 548.236
+    }
+  },
+  "heap": {
+    "normal-many-lines.txt-before": {},
+    "normal-many-lines.txt-after": {
+      "NSTextLayoutFragment": {
+        "live_count": 126549,
+        "allocated_bytes": 64793088
+      },
+      "NSTextLineFragment": {
+        "live_count": 126550,
+        "allocated_bytes": 40496000
+      },
+      "NSTextParagraph": {
+        "live_count": 126532,
+        "allocated_bytes": 16196096
+      },
+      "NSTextLineFragment._advances (struct CGSize)": {
+        "live_count": 94912,
+        "allocated_bytes": 32901904
+      },
+      "NSCountableTextRange": {
+        "live_count": 347974,
+        "allocated_bytes": 16702752
+      }
+    },
+    "normal-fewer-lines.txt-after": {
+      "NSTextLayoutFragment": {
+        "live_count": 4001,
+        "allocated_bytes": 2048512
+      },
+      "NSTextLineFragment": {
+        "live_count": 3983,
+        "allocated_bytes": 1274560
+      },
+      "NSTextParagraph": {
+        "live_count": 3955,
+        "allocated_bytes": 506240
+      },
+      "NSTextLineFragment._advances (struct CGSize)": {
+        "live_count": 153,
+        "allocated_bytes": 1246464
+      },
+      "NSCountableTextRange": {
+        "live_count": 11870,
+        "allocated_bytes": 569760
+      },
+      "_CTNativeGlyphStorage._advanceWidths (double[])": {
+        "live_count": 3829,
+        "allocated_bytes": 47050752
+      }
+    },
+    "normal-tiny.txt-after": {
+      "NSTextLayoutFragment": {
+        "live_count": 3,
+        "allocated_bytes": 1536
+      },
+      "NSTextLineFragment": {
+        "live_count": 6,
+        "allocated_bytes": 1920
+      },
+      "NSTextParagraph": {
+        "live_count": 1,
+        "allocated_bytes": 128
+      },
+      "NSTextLineFragment._advances (struct CGSize)": {
+        "live_count": 3,
+        "allocated_bytes": 480
+      },
+      "NSCountableTextRange": {
+        "live_count": 4,
+        "allocated_bytes": 192
+      }
+    },
+    "ab-reference-many-lines.txt": {
+      "NSTextLayoutFragment": {
+        "live_count": 126588,
+        "allocated_bytes": 64813056
+      },
+      "NSTextLineFragment": {
+        "live_count": 126589,
+        "allocated_bytes": 40508480
+      },
+      "NSTextParagraph": {
+        "live_count": 126532,
+        "allocated_bytes": 16196096
+      },
+      "NSTextLineFragment._advances (struct CGSize)": {
+        "live_count": 94941,
+        "allocated_bytes": 32910464
+      },
+      "NSCountableTextRange": {
+        "live_count": 347974,
+        "allocated_bytes": 16702752
+      }
+    },
+    "ab-constant-origin-many-lines.txt": {
+      "NSTextLayoutFragment": {
+        "live_count": 197,
+        "allocated_bytes": 100864
+      },
+      "NSTextLineFragment": {
+        "live_count": 99,
+        "allocated_bytes": 31680
+      },
+      "NSTextParagraph": {
+        "live_count": 159,
+        "allocated_bytes": 20352
+      },
+      "NSTextLineFragment._advances (struct CGSize)": {
+        "live_count": 76,
+        "allocated_bytes": 25664
+      },
+      "NSCountableTextRange": {
+        "live_count": 441,
+        "allocated_bytes": 21168
+      }
+    }
+  },
+  "peak_dirty_graphics_mib": {
+    "tiny.txt-peak": 226.0,
+    "many-lines.txt-peak": 226.0,
+    "normal-tiny.txt": 1.953125,
+    "normal-many-lines.txt": 3.71875
+  },
+  "ab_document_open": {
+    "reference": {
+      "settled_before_editor_ax_mib": {
+        "median": 313.517,
+        "observations": [
+          312.376,
+          313.517,
+          313.611
+        ]
+      },
+      "peak_before_editor_ax_mib": {
+        "median": 549.142,
+        "observations": [
+          545.111,
+          549.142,
+          549.251
+        ]
+      }
+    },
+    "constant-origin": {
+      "settled_before_editor_ax_mib": {
+        "median": 51.392,
+        "observations": [
+          49.657,
+          51.392,
+          51.392
+        ]
+      },
+      "peak_before_editor_ax_mib": {
+        "median": 287.407,
+        "observations": [
+          282.892,
+          287.407,
+          287.439
+        ]
+      }
+    }
+  },
+  "diagnostic_variants": {
+    "first": [
+      {
+        "after_mib": 312.26688385009766,
+        "before_mib": 29.563461303710938,
+        "before_peak_mib": 30.344711303710938,
+        "case": "many-lines.txt",
+        "mode": "reference",
+        "peak_before_editor_ax_mib": 545.1106109619141,
+        "peak_mib": 545.1106109619141,
+        "settled_before_editor_ax_mib": 312.37625885009766,
+        "suite": "installed_file_memory",
+        "trial": 1
+      },
+      {
+        "after_mib": 49.563575744628906,
+        "before_mib": 29.73535919189453,
+        "before_peak_mib": 30.37598419189453,
+        "case": "many-lines.txt",
+        "mode": "constant-origin",
+        "peak_before_editor_ax_mib": 282.8916778564453,
+        "peak_mib": 282.8916778564453,
+        "settled_before_editor_ax_mib": 49.65730285644531,
+        "suite": "installed_file_memory",
+        "trial": 1
+      },
+      {
+        "after_mib": 313.22003173828125,
+        "before_mib": 30.03223419189453,
+        "before_peak_mib": 30.75098419189453,
+        "case": "many-lines.txt",
+        "mode": "zero-y-inset",
+        "peak_before_editor_ax_mib": 549.4075088500977,
+        "peak_mib": 549.4075088500977,
+        "settled_before_editor_ax_mib": 313.14188385009766,
+        "suite": "installed_file_memory",
+        "trial": 1
+      },
+      {
+        "after_mib": 311.87625885009766,
+        "before_mib": 29.516586303710938,
+        "before_peak_mib": 30.235336303710938,
+        "case": "many-lines.txt",
+        "mode": "no-focus",
+        "peak_before_editor_ax_mib": 547.9230880737305,
+        "peak_mib": 547.9230880737305,
+        "settled_before_editor_ax_mib": 311.76686096191406,
+        "suite": "installed_file_memory",
+        "trial": 1
+      },
+      {
+        "after_mib": 309.89190673828125,
+        "before_mib": 29.62598419189453,
+        "before_peak_mib": 30.31348419189453,
+        "case": "many-lines.txt",
+        "mode": "no-gutter",
+        "peak_before_editor_ax_mib": 540.0481338500977,
+        "peak_mib": 540.0481338500977,
+        "settled_before_editor_ax_mib": 309.79813385009766,
+        "suite": "installed_file_memory",
+        "trial": 1
+      },
+      {
+        "after_mib": 310.43873596191406,
+        "before_mib": 29.43841552734375,
+        "before_peak_mib": 30.12591552734375,
+        "case": "many-lines.txt",
+        "mode": "no-paint",
+        "peak_before_editor_ax_mib": 542.9699630737305,
+        "peak_mib": 542.9699630737305,
+        "settled_before_editor_ax_mib": 310.29808807373047,
+        "suite": "installed_file_memory",
+        "trial": 1
+      },
+      {
+        "after_mib": 303.56373596191406,
+        "before_mib": 29.641586303710938,
+        "before_peak_mib": 30.282211303710938,
+        "case": "many-lines.txt",
+        "mode": "bounded-height",
+        "peak_before_editor_ax_mib": 539.6730651855469,
+        "peak_mib": 539.6730651855469,
+        "settled_before_editor_ax_mib": 303.43871307373047,
+        "suite": "installed_file_memory",
+        "trial": 1
+      }
+    ],
+    "repeat": [
+      {
+        "after_mib": 313.59500885009766,
+        "before_mib": 29.42285919189453,
+        "before_peak_mib": 30.094711303710938,
+        "case": "many-lines.txt",
+        "internal_open": false,
+        "mode": "reference",
+        "peak_before_editor_ax_mib": 549.1418609619141,
+        "peak_mib": 549.1418609619141,
+        "settled_before_editor_ax_mib": 313.51688385009766,
+        "suite": "installed_file_memory",
+        "trial": 1
+      },
+      {
+        "after_mib": 51.45417785644531,
+        "before_mib": 29.610336303710938,
+        "before_peak_mib": 30.313461303710938,
+        "case": "many-lines.txt",
+        "internal_open": false,
+        "mode": "constant-origin",
+        "peak_before_editor_ax_mib": 287.4072570800781,
+        "peak_mib": 287.4072570800781,
+        "settled_before_editor_ax_mib": 51.39165496826172,
+        "suite": "installed_file_memory",
+        "trial": 1
+      },
+      {
+        "after_mib": 312.31375885009766,
+        "before_mib": 29.750961303710938,
+        "before_peak_mib": 30.422836303710938,
+        "case": "many-lines.txt",
+        "internal_open": false,
+        "mode": "zero-insets",
+        "peak_before_editor_ax_mib": 544.9855880737305,
+        "peak_mib": 544.9855880737305,
+        "settled_before_editor_ax_mib": 312.25123596191406,
+        "suite": "installed_file_memory",
+        "trial": 1
+      },
+      {
+        "after_mib": 311.62628173828125,
+        "before_mib": 29.86035919189453,
+        "before_peak_mib": 30.53223419189453,
+        "case": "many-lines.txt",
+        "internal_open": false,
+        "mode": "zero-x-inset",
+        "peak_before_editor_ax_mib": 544.7668838500977,
+        "peak_mib": 544.7668838500977,
+        "settled_before_editor_ax_mib": 311.56378173828125,
+        "suite": "installed_file_memory",
+        "trial": 1
+      },
+      {
+        "after_mib": 312.68878173828125,
+        "before_mib": 29.67285919189453,
+        "before_peak_mib": 30.43848419189453,
+        "case": "many-lines.txt",
+        "internal_open": false,
+        "mode": "fixed-width",
+        "peak_before_editor_ax_mib": 545.2512588500977,
+        "peak_mib": 545.2512588500977,
+        "settled_before_editor_ax_mib": 312.57938385009766,
+        "suite": "installed_file_memory",
+        "trial": 1
+      },
+      {
+        "after_mib": 51.469825744628906,
+        "before_mib": 29.438461303710938,
+        "before_peak_mib": 30.079063415527344,
+        "case": "many-lines.txt",
+        "internal_open": false,
+        "mode": "constant-origin",
+        "peak_before_editor_ax_mib": 287.4385528564453,
+        "peak_mib": 287.4385528564453,
+        "settled_before_editor_ax_mib": 51.391700744628906,
+        "suite": "installed_file_memory",
+        "trial": 1
+      },
+      {
+        "after_mib": 313.68878173828125,
+        "before_mib": 29.782211303710938,
+        "before_peak_mib": 30.500961303710938,
+        "case": "many-lines.txt",
+        "internal_open": false,
+        "mode": "reference",
+        "peak_before_editor_ax_mib": 549.2512588500977,
+        "peak_mib": 549.2512588500977,
+        "settled_before_editor_ax_mib": 313.61063385009766,
+        "suite": "installed_file_memory",
+        "trial": 1
+      }
+    ],
+    "tiny_graphics": [
+      {
+        "after_mib": 37.32917785644531,
+        "before_mib": 29.672836303710938,
+        "before_peak_mib": 30.235313415527344,
+        "case": "tiny.txt",
+        "mode": "reference",
+        "peak_before_editor_ax_mib": 266.9385299682617,
+        "peak_mib": 266.9385299682617,
+        "settled_before_editor_ax_mib": 37.20415496826172,
+        "suite": "installed_file_memory",
+        "trial": 1
+      },
+      {
+        "after_mib": 36.75105285644531,
+        "before_mib": 29.750961303710938,
+        "before_peak_mib": 30.375961303710938,
+        "case": "tiny.txt",
+        "mode": "no-reveal",
+        "peak_before_editor_ax_mib": 266.9541549682617,
+        "peak_mib": 266.9541549682617,
+        "settled_before_editor_ax_mib": 36.64165496826172,
+        "suite": "installed_file_memory",
+        "trial": 1
+      },
+      {
+        "after_mib": 37.14165496826172,
+        "before_mib": 29.625938415527344,
+        "before_peak_mib": 30.204063415527344,
+        "case": "tiny.txt",
+        "mode": "no-tabs",
+        "peak_before_editor_ax_mib": 266.7822570800781,
+        "peak_mib": 266.7822570800781,
+        "settled_before_editor_ax_mib": 37.047882080078125,
+        "suite": "installed_file_memory",
+        "trial": 1
+      },
+      {
+        "after_mib": 37.03227996826172,
+        "before_mib": 29.766586303710938,
+        "before_peak_mib": 30.391586303710938,
+        "case": "tiny.txt",
+        "mode": "no-crumb",
+        "peak_before_editor_ax_mib": 267.1885299682617,
+        "peak_mib": 267.1885299682617,
+        "settled_before_editor_ax_mib": 36.92290496826172,
+        "suite": "installed_file_memory",
+        "trial": 1
+      },
+      {
+        "after_mib": 37.31355285644531,
+        "before_mib": 29.672836303710938,
+        "before_peak_mib": 30.282211303710938,
+        "case": "tiny.txt",
+        "mode": "no-scrollers",
+        "peak_before_editor_ax_mib": 266.9385299682617,
+        "peak_mib": 266.9385299682617,
+        "settled_before_editor_ax_mib": 37.20415496826172,
+        "suite": "installed_file_memory",
+        "trial": 1
+      },
+      {
+        "after_mib": 36.50105285644531,
+        "before_mib": 29.469711303710938,
+        "before_peak_mib": 30.016563415527344,
+        "case": "tiny.txt",
+        "mode": "no-selection",
+        "peak_before_editor_ax_mib": 266.6729049682617,
+        "peak_mib": 266.6729049682617,
+        "settled_before_editor_ax_mib": 36.37602996826172,
+        "suite": "installed_file_memory",
+        "trial": 1
+      },
+      {
+        "after_mib": 37.59477996826172,
+        "before_mib": 29.969711303710938,
+        "before_peak_mib": 30.563461303710938,
+        "case": "tiny.txt",
+        "mode": "no-scroll-row",
+        "peak_before_editor_ax_mib": 267.2353820800781,
+        "peak_mib": 267.2353820800781,
+        "settled_before_editor_ax_mib": 37.469757080078125,
+        "suite": "installed_file_memory",
+        "trial": 1
+      },
+      {
+        "after_mib": 36.501007080078125,
+        "before_mib": 29.485313415527344,
+        "before_peak_mib": 30.047813415527344,
+        "case": "tiny.txt",
+        "mode": "no-focus",
+        "peak_before_editor_ax_mib": 266.6572570800781,
+        "peak_mib": 266.6572570800781,
+        "settled_before_editor_ax_mib": 36.391632080078125,
+        "suite": "installed_file_memory",
+        "trial": 1
+      }
+    ],
+    "internal_open": [
+      {
+        "after_mib": 36.797950744628906,
+        "before_mib": 29.64160919189453,
+        "before_peak_mib": 30.36035919189453,
+        "case": "tiny.txt",
+        "internal_open": true,
+        "mode": "reference",
+        "peak_before_editor_ax_mib": 266.8760528564453,
+        "peak_mib": 266.8760528564453,
+        "settled_before_editor_ax_mib": 36.67292785644531,
+        "suite": "installed_file_memory",
+        "trial": 1
+      },
+      {
+        "after_mib": 314.56375885009766,
+        "before_mib": 30.032211303710938,
+        "before_peak_mib": 30.719711303710938,
+        "case": "many-lines.txt",
+        "internal_open": true,
+        "mode": "reference",
+        "peak_before_editor_ax_mib": 550.0324630737305,
+        "peak_mib": 550.0324630737305,
+        "settled_before_editor_ax_mib": 314.46998596191406,
+        "suite": "installed_file_memory",
+        "trial": 1
+      }
+    ],
+    "view_isolation": [
+      {
+        "after_mib": 29.282211303710938,
+        "before_mib": 29.360336303710938,
+        "before_peak_mib": 30.125961303710938,
+        "case": "tiny.txt",
+        "internal_open": false,
+        "mode": "read-only-probe",
+        "peak_before_editor_ax_mib": 30.125961303710938,
+        "peak_mib": 30.125961303710938,
+        "settled_before_editor_ax_mib": 29.282211303710938,
+        "suite": "installed_file_memory",
+        "trial": 1
+      },
+      {
+        "after_mib": 29.047836303710938,
+        "before_mib": 29.360336303710938,
+        "before_peak_mib": 30.110336303710938,
+        "case": "tiny.txt",
+        "internal_open": false,
+        "mode": "construct-only",
+        "peak_before_editor_ax_mib": 30.110336303710938,
+        "peak_mib": 30.110336303710938,
+        "settled_before_editor_ax_mib": 29.047836303710938,
+        "suite": "installed_file_memory",
+        "trial": 1
+      },
+      {
+        "after_mib": 29.641586303710938,
+        "before_mib": 29.454086303710938,
+        "before_peak_mib": 30.188461303710938,
+        "case": "tiny.txt",
+        "internal_open": false,
+        "mode": "blank-host",
+        "peak_before_editor_ax_mib": 30.188461303710938,
+        "peak_mib": 30.188461303710938,
+        "settled_before_editor_ax_mib": 29.641586303710938,
+        "suite": "installed_file_memory",
+        "trial": 1
+      },
+      {
+        "after_mib": 29.000961303710938,
+        "before_mib": 29.282211303710938,
+        "before_peak_mib": 30.000938415527344,
+        "case": "tiny.txt",
+        "internal_open": false,
+        "mode": "no-text-attachment",
+        "peak_before_editor_ax_mib": 30.000938415527344,
+        "peak_mib": 30.000938415527344,
+        "settled_before_editor_ax_mib": 29.000961303710938,
+        "suite": "installed_file_memory",
+        "trial": 1
+      },
+      {
+        "after_mib": 36.063575744628906,
+        "before_mib": 28.266586303710938,
+        "before_peak_mib": 28.922836303710938,
+        "case": "tiny.txt",
+        "internal_open": false,
+        "mode": "empty-welcome",
+        "peak_before_editor_ax_mib": 265.6104507446289,
+        "peak_mib": 265.6104507446289,
+        "settled_before_editor_ax_mib": 36.063575744628906,
+        "suite": "installed_file_memory",
+        "trial": 1
+      },
+      {
+        "after_mib": 36.64167785644531,
+        "before_mib": 29.61035919189453,
+        "before_peak_mib": 30.329086303710938,
+        "case": "tiny.txt",
+        "internal_open": false,
+        "mode": "reference",
+        "peak_before_editor_ax_mib": 266.8135528564453,
+        "peak_mib": 266.8135528564453,
+        "settled_before_editor_ax_mib": 36.64167785644531,
+        "suite": "installed_file_memory",
+        "trial": 1
+      }
+    ]
+  },
+  "sampled_main_thread_stack": [
+    "NSScrollView.setFrameSize",
+    "NSTextView.renewGState",
+    "NSTextView._viewportBoundsForTextViewportLayoutController",
+    "NSTextView.textContainerOrigin",
+    "NSTextLayoutManager.ensureLayoutForRange",
+    "NSTextLayoutManager.enumerateTextLayoutFragments"
+  ],
+  "reference": "https://developer.apple.com/documentation/appkit/nstextview/textcontainerorigin",
+  "limitations": "物理内存、系统分类的 graphics 脏页、活对象的堆大小是不同口径。对照隔离启动时的文本布局开销；替代坐标算法仍需验证编辑、滚动、选区、输入法和不同系统版本。"
+}

@@ -8,14 +8,7 @@ enum Palette {
     static let canvas = rgb(0x1c1e22), rail = rgb(0x292c32), sidebar = rgb(0x22252a)
     static let chrome = rgb(0x25282d), line = rgb(0x373a40), text = rgb(0xd8dce3)
     static let muted = rgb(0x939ba7), blue = rgb(0x75baff), green = rgb(0x91c7a4), red = rgb(0xe59898)
-    static let code = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
     static let syntax = [text, rgb(0x839685), rgb(0xd9ab91), rgb(0xb6ce9c), rgb(0xcda4df), rgb(0x80c7bf), rgb(0xe3cf99), blue]
-    static let markdownFonts: [NSFont] = {
-        let bold = NSFont.monospacedSystemFont(ofSize: code.pointSize, weight: .bold)
-        let manager = NSFontManager.shared
-        return [code, bold, manager.convert(code, toHaveTrait: .italicFontMask),
-                manager.convert(bold, toHaveTrait: .italicFontMask)]
-    }()
 }
 
 extension NSView {

@@ -60,6 +60,8 @@ targets:
 schemes:
   CyberPeek:
     test:
+      environmentVariables:
+        CYBERPEEK_TEST_WORKSPACE: "$(SRCROOT)/Tests"
       targets: [CyberPeekTests]
     build:
       targets:

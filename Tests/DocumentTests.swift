@@ -3,10 +3,9 @@ import XCTest
 
 final class DocumentTests: XCTestCase {
     @MainActor func testCopyRelativePathFromBreadcrumbAndOtherTreeRow() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let root = try makeTestWorkspace()
         let folder = root.appendingPathComponent("源码 目录")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
         let active = folder.appendingPathComponent("main.swift")
         let other = folder.appendingPathComponent("说明 #1.md")
         try Data().write(to: active)
@@ -58,9 +57,7 @@ final class DocumentTests: XCTestCase {
     }
 
     @MainActor func testExternalSaveConflictPreservesBothVersions() throws {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
-        defer { try? FileManager.default.removeItem(at:folder) }
+        let folder = try makeTestWorkspace()
         let file = folder.appendingPathComponent("sample.txt")
         try Data("base\n".utf8).write(to:file)
         let base = try DiskText.read(file)
@@ -75,7 +72,7 @@ final class DocumentTests: XCTestCase {
     }
 
     @MainActor func testSwiftKeywordHasVisibleColor() throws {
-        let file = URL(fileURLWithPath:"/tmp/example.swift")
+        let file = try makeTestWorkspace().appendingPathComponent("example.swift")
         let disk = try DiskText(Data("func hello() {}\n".utf8))
         let editor = Editor(url:file,identity:file.path,title:"example",source:disk.text,disk:disk)
         let window = NSWindow(contentRect:NSRect(x:0,y:0,width:520,height:240),styleMask:[.borderless],backing:.buffered,defer:false)
@@ -89,9 +86,7 @@ final class DocumentTests: XCTestCase {
     }
 
     func testSearchReturnsUTF16SelectionAfterEmoji() throws {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
-        defer { try? FileManager.default.removeItem(at:folder) }
+        let folder = try makeTestWorkspace()
         try "🍓中文 search here\n".write(to:folder.appendingPathComponent("test.txt"),atomically:true,encoding:.utf8)
         var hits = [SearchHit]()
         try WorkspaceSearch.find("search",in:folder,job:ShellJob()) { hits += $0 }

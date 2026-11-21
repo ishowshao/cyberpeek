@@ -9,28 +9,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         workbench = Workbench()
         workbench.window.makeKeyAndOrderFront(nil)
         app.activate(ignoringOtherApps:true)
-        let args = CommandLine.arguments.dropFirst().filter { !$0.hasPrefix("-") }.map { URL(fileURLWithPath:$0) }
-        let urls = pending.isEmpty ? args : pending
-        if !urls.isEmpty { open(urls) }
-        else if let last = UserDefaults.standard.string(forKey:"lastFolder"), FileManager.default.fileExists(atPath:last) {
-            workbench.openFolder(URL(fileURLWithPath:last))
+        let environment = ProcessInfo.processInfo.environment
+        if let fixture = environment["CYBERPEEK_TEST_WORKSPACE"] {
+            workbench.openFolder(URL(fileURLWithPath: fixture), remember: false)
+            return
         }
+        // A test runner without the scheme's fixture starts with an empty window.
+        if environment["XCTestConfigurationFilePath"] != nil || environment["XCTestBundlePath"] != nil { return }
+        let urls = pending.isEmpty ? Self.fileArguments(CommandLine.arguments.dropFirst()) : pending
+        if !urls.isEmpty { open(urls) }
+        else if let last = UserDefaults.standard.string(forKey:"lastFolder"), last != "/" {
+            workbench.openFolder(URL(fileURLWithPath:last), remember: false)
+        }
+    }
+    static func fileArguments(_ arguments: ArraySlice<String>) -> [URL] {
+        var urls: [URL] = [], options = true, skipValue = false
+        for argument in arguments {
+            if options && argument == "--" { options = false; skipValue = false; continue }
+            if options && argument.hasPrefix("-") {
+                // AppKit and XCTest supply defaults as key/value pairs, e.g. -ApplePersistenceIgnoreState YES.
+                skipValue = !argument.hasPrefix("-psn_") && !argument.contains("=")
+                continue
+            }
+            if skipValue { skipValue = false; continue }
+            if !argument.isEmpty { urls.append(URL(fileURLWithPath: argument)) }
+        }
+        return urls
     }
     func application(_ application: NSApplication, open urls: [URL]) {
         if workbench == nil { pending.append(contentsOf:urls) } else { open(urls) }
     }
     private func open(_ urls: [URL]) {
-        guard let first = urls.first?.resolvingSymlinksInPath().standardizedFileURL else { return }
-        if (try? first.resourceValues(forKeys:[.isDirectoryKey]).isDirectory) == true {
+        guard let first = urls.first?.resolvingSymlinksInPath().standardizedFileURL, first.isFileURL,
+              let type = try? first.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey]) else { return }
+        if type.isDirectory == true {
             workbench.openFolder(first)
-            if let file = urls.dropFirst().first, workbench.root?.path == first.standardizedFileURL.path { workbench.open(.file(file),pin:true) }
-        } else {
+            if let file = urls.dropFirst().first?.resolvingSymlinksInPath().standardizedFileURL,
+               workbench.root?.path == first.path, file.pathComponents.starts(with: first.pathComponents),
+               (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
+                workbench.open(.file(file),pin:true)
+            }
+        } else if type.isRegularFile == true {
             let parent = first.deletingLastPathComponent()
-            if workbench.root == nil || !first.path.hasPrefix(workbench.root!.path + "/") { workbench.openFolder(parent) }
-            if let root = workbench.root, first.path.hasPrefix(root.path + "/") { workbench.open(.file(first),pin:true) }
+            if workbench.root.map({ first.pathComponents.starts(with: $0.pathComponents) }) != true { workbench.openFolder(parent) }
+            if let root = workbench.root, first.pathComponents.starts(with: root.pathComponents) { workbench.open(.file(first),pin:true) }
         }
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    func applicationWillTerminate(_ notification: Notification) { workbench?.cancelWorkspaceJobs() }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if let w = workbench, w.window.isVisible, !w.documents.allSatisfy({ w.confirmClosing($0) }) { return .terminateCancel }
         return .terminateNow
@@ -85,6 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item(view,"在文件中搜索",#selector(search),"f",[.command,.shift],self)
         item(view,"源代码管理",#selector(git),"g",[.control,.shift],self)
         item(view,"切换侧边栏",#selector(toggleSidebar),"b",.command,self)
+        EditorFontSettings.shared.addMenuItems(to: view)
         let go = menu("前往"); item(go,"后退",#selector(back),"-",.control,self); item(go,"前进",#selector(forward),"-",[.control,.shift],self)
         let window = menu("窗口"); item(window,"最小化",#selector(NSWindow.performMiniaturize(_:)),"m"); item(window,"缩放",#selector(NSWindow.performZoom(_:)))
         NSApp.windowsMenu = window; NSApp.mainMenu = main

@@ -73,15 +73,19 @@ private final class Gutter: NSView {
               let visible = manager.textViewportLayoutController.viewportRange else { return }
         let style = NSMutableParagraphStyle()
         style.alignment = .right
-        let attrs: [NSAttributedString.Key:Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular),
+        let font = owner.fontSettings.fonts.lineNumber
+        let attrs: [NSAttributedString.Key:Any] = [.font: font,
                                                    .foregroundColor: Palette.muted, .paragraphStyle: style]
+        let height = ceil(("0" as NSString).size(withAttributes: attrs).height)
         let origin = owner.text.textContainerOrigin.y - owner.scroll.contentView.bounds.origin.y
         manager.enumerateTextLayoutFragments(from: visible.location, options: []) { fragment in
             let y = origin + fragment.layoutFragmentFrame.minY
             if y > self.bounds.maxY { return false }
             let index = content.offset(from: content.documentRange.location, to: fragment.rangeInElement.location)
             let line = owner.lineNumber(at: index)
-            ("\(line)" as NSString).draw(in: NSRect(x: 0, y: y+1, width: self.bounds.width-9, height: 19), withAttributes: attrs)
+            let number = "\(line)" as NSString
+            let lineHeight = fragment.textLineFragments.first?.typographicBounds.height ?? height
+            number.draw(in: NSRect(x: 0, y: y + (lineHeight - height)/2, width: self.bounds.width-9, height: height), withAttributes: attrs)
             return true
         }
     }
@@ -92,6 +96,8 @@ final class Editor: NSObject, NSTextViewDelegate {
     let text = SourceTextView(usingTextLayoutManager: true)
     let scroll = NSScrollView()
     private let gutter = Gutter()
+    private lazy var gutterWidth = gutter.widthAnchor.constraint(equalToConstant: 54)
+    fileprivate let fontSettings: EditorFontSettings
     let url: URL
     let change: Change?
     let identity: String
@@ -114,7 +120,8 @@ final class Editor: NSObject, NSTextViewDelegate {
     let isPatch: Bool
 
     init(url: URL, identity: String, title: String, source: String, disk: DiskText? = nil,
-         change: Change? = nil, patch: Bool = false) {
+         change: Change? = nil, patch: Bool = false, fontSettings: EditorFontSettings = .shared) {
+        self.fontSettings = fontSettings
         self.url = url; self.identity = identity; self.title = title; base = disk; self.change = change; isPatch = patch
         worker = SyntaxWorker(ext: patch ? "" : url.pathExtension.lowercased())
         super.init()
@@ -126,7 +133,7 @@ final class Editor: NSObject, NSTextViewDelegate {
         text.isAutomaticLinkDetectionEnabled = false; text.smartInsertDeleteEnabled = false
         text.usesFindBar = true; text.isIncrementalSearchingEnabled = true
         text.drawsBackground = true; text.backgroundColor = Palette.canvas; text.textColor = Palette.text
-        text.font = Palette.code; text.insertionPointColor = Palette.text
+        text.font = fontSettings.fonts.regular; text.insertionPointColor = Palette.text
         text.textContainerInset = NSSize(width: 4, height: 12)
         text.isHorizontallyResizable = true; text.isVerticallyResizable = true
         text.minSize = .zero; text.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
@@ -137,17 +144,31 @@ final class Editor: NSObject, NSTextViewDelegate {
         scroll.autohidesScrollers = true; scroll.backgroundColor = Palette.canvas
         gutter.translatesAutoresizingMaskIntoConstraints = false; scroll.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(gutter); view.addSubview(scroll)
-        NSLayoutConstraint.activate([gutter.leadingAnchor.constraint(equalTo: view.leadingAnchor), gutter.widthAnchor.constraint(equalToConstant: 54),
+        NSLayoutConstraint.activate([gutter.leadingAnchor.constraint(equalTo: view.leadingAnchor), gutterWidth,
             gutter.topAnchor.constraint(equalTo: view.topAnchor), gutter.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             scroll.leadingAnchor.constraint(equalTo: gutter.trailingAnchor), scroll.topAnchor.constraint(equalTo: view.topAnchor),
             scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor), scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor)])
         scroll.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(redraw), name: NSView.boundsDidChangeNotification, object: scroll.contentView)
+        NotificationCenter.default.addObserver(self, selector: #selector(fontSizeChanged), name: EditorFontSettings.didChange, object: fontSettings)
         text.delegate = self
         text.lineActivated = { [weak self] in
             if let self, let n = self.patchTargetLine() { self.onDiffLine?(n) }
         }
         replace(source)
+    }
+    @objc private func fontSizeChanged() {
+        text.font = fontSettings.fonts.regular
+        text.typingAttributes[.font] = fontSettings.fonts.regular
+        updateGutterWidth()
+        paintedRange = nil
+        redraw()
+    }
+
+    private func updateGutterWidth() {
+        let digits = max(4, String(lineStarts.count).count)
+        let width = ("0" as NSString).size(withAttributes: [.font: fontSettings.fonts.lineNumber]).width
+        gutterWidth.constant = max(54, ceil(CGFloat(digits) * width) + 18)
     }
 
     func replace(_ source: String) {
@@ -177,6 +198,7 @@ final class Editor: NSObject, NSTextViewDelegate {
         lineStarts = [0]
         var index = 0
         for unit in text.string.utf16 { index += 1; if unit == 10 { lineStarts.append(index) } }
+        updateGutterWidth()
     }
     func lineNumber(at offset: Int) -> Int {
         var low = 0, high = lineStarts.count
@@ -242,7 +264,7 @@ final class Editor: NSObject, NSTextViewDelegate {
         defer { storage.endEditing() }
         storage.addAttribute(.foregroundColor,value:Palette.text,range:target)
         if worker.isMarkdown {
-            storage.addAttribute(.font, value: Palette.code, range: target)
+            storage.addAttribute(.font, value: fontSettings.fonts.regular, range: target)
             storage.removeAttribute(.strikethroughStyle, range: target)
         }
         if isPatch {
@@ -271,7 +293,7 @@ final class Editor: NSObject, NSTextViewDelegate {
             storage.addAttribute(.foregroundColor, value: Palette.syntax[Int(token.color)], range: range)
             let fontIndex = Int(token.traits) & (VSBold | VSItalic)
             if fontIndex != 0 {
-                storage.addAttribute(.font, value: Palette.markdownFonts[fontIndex], range: range)
+                storage.addAttribute(.font, value: fontSettings.fonts.markdown[fontIndex], range: range)
             }
             if Int(token.traits) & VSStrike != 0 {
                 storage.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: range)

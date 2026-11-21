@@ -13,9 +13,12 @@
 		5E3B445FA25757B8BBC79494 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB3513CB756295F478D367B1 /* main.swift */; };
 		736798FC7C30FA03637F8529 /* Syntax.c in Sources */ = {isa = PBXBuildFile; fileRef = 50FBB6A654A9255F24CB88F9 /* Syntax.c */; };
 		866349A56DAC728AA7F31CAC /* Markdown.c in Sources */ = {isa = PBXBuildFile; fileRef = 753DD38C3CEA93D7B03B1F33 /* Markdown.c */; };
+		88EB2F911D9096C237637497 /* EditorFontTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDDA2642F7C57FECBFB89B8E /* EditorFontTests.swift */; };
 		B5B59D3CC649FE8E40037960 /* CyberPeek.icns in Resources */ = {isa = PBXBuildFile; fileRef = 7A88BF9C18210D390FEC5C27 /* CyberPeek.icns */; };
+		BBA2D39ECA74363720E53F0D /* EditorFontSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF4DFB0DD97BD6F5C588E682 /* EditorFontSettings.swift */; };
 		BCAC4FD5D3C41BCAFFBCFF9B /* Workbench.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F9893847237EA912766161F /* Workbench.swift */; };
 		BDE08AA518CA3ED1F6CA98D4 /* QuickOpen.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF8CB72B554D9CAFA154B176 /* QuickOpen.swift */; };
+		C229B36BBC350CDA802E2267 /* WorkspaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E51A7290A835BBF6AA959A7F /* WorkspaceTests.swift */; };
 		C832E8A2D2E5CAC07D2EBEE0 /* MarkdownTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAABA375732E1EE776992FB7 /* MarkdownTests.swift */; };
 		E1FB9CB9BDBDF5C6563B9602 /* Workspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70E866BCEB5FA285835F880B /* Workspace.swift */; };
 		F267B536AD2ABCEFEA0ABF71 /* Documents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B32D483C25A4E13DFE61400 /* Documents.swift */; };
@@ -50,7 +53,10 @@
 		A43F6B9403F08BBA6DC993F2 /* SyntaxInternal.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SyntaxInternal.h; sourceTree = "<group>"; };
 		BAABA375732E1EE776992FB7 /* MarkdownTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownTests.swift; sourceTree = "<group>"; };
 		BB3513CB756295F478D367B1 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		BF4DFB0DD97BD6F5C588E682 /* EditorFontSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorFontSettings.swift; sourceTree = "<group>"; };
+		CDDA2642F7C57FECBFB89B8E /* EditorFontTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorFontTests.swift; sourceTree = "<group>"; };
 		DF8CB72B554D9CAFA154B176 /* QuickOpen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickOpen.swift; sourceTree = "<group>"; };
+		E51A7290A835BBF6AA959A7F /* WorkspaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -60,6 +66,7 @@
 				7A88BF9C18210D390FEC5C27 /* CyberPeek.icns */,
 				1B32D483C25A4E13DFE61400 /* Documents.swift */,
 				920FA3C9D6ACACDD1B847BC2 /* Editor.swift */,
+				BF4DFB0DD97BD6F5C588E682 /* EditorFontSettings.swift */,
 				9A85CF015D6F4E6BCE0BF234 /* Info.plist */,
 				0EA27A682B99DFD6A63A6371 /* Interface.swift */,
 				BB3513CB756295F478D367B1 /* main.swift */,
@@ -88,7 +95,9 @@
 			isa = PBXGroup;
 			children = (
 				93ACEA717C03BF20A59B5602 /* DocumentTests.swift */,
+				CDDA2642F7C57FECBFB89B8E /* EditorFontTests.swift */,
 				BAABA375732E1EE776992FB7 /* MarkdownTests.swift */,
+				E51A7290A835BBF6AA959A7F /* WorkspaceTests.swift */,
 			);
 			path = Tests;
 			sourceTree = "<group>";
@@ -233,6 +242,7 @@
 			files = (
 				F267B536AD2ABCEFEA0ABF71 /* Documents.swift in Sources */,
 				40301348EB65DFAB3EF89CFB /* Editor.swift in Sources */,
+				BBA2D39ECA74363720E53F0D /* EditorFontSettings.swift in Sources */,
 				1F779168E90997C04FCB506C /* Interface.swift in Sources */,
 				866349A56DAC728AA7F31CAC /* Markdown.c in Sources */,
 				BDE08AA518CA3ED1F6CA98D4 /* QuickOpen.swift in Sources */,
@@ -249,7 +259,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				35D6283E4DDDEF6A5F25B38A /* DocumentTests.swift in Sources */,
+				88EB2F911D9096C237637497 /* EditorFontTests.swift in Sources */,
 				C832E8A2D2E5CAC07D2EBEE0 /* MarkdownTests.swift in Sources */,
+				C229B36BBC350CDA802E2267 /* WorkspaceTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

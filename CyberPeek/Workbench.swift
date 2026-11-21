@@ -12,7 +12,8 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     var projectButton: ActionButton!
     var activity: [Section:(ActionButton,NSView)] = [:]
     var root: URL?, documents = [Editor](), current: Editor?
-    var monitor: WorkspaceMonitor?, repoMonitor: WorkspaceMonitor?, gitMonitor: WorkspaceMonitor?, eventTask: DispatchWorkItem?
+    var monitor: WorkspaceMonitor?, eventTask: DispatchWorkItem?
+    private var gitJob: ShellJob?
     var queryJob: ShellJob?, indexJob: ShellJob?, queryVersion = 0, projectVersion = 0, loadVersion = 0
     var gitVersion = 0, diskVersion = 0
     private var toolbarDelegate: ToolbarItems!
@@ -135,6 +136,7 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         side.switchTo(section)
         if let current { side.reveal(current.url) }
         if section == .search { window.makeFirstResponder(side.query) }
+        if section == .git, let root { refreshGit(in: root) }
     }
     func toggleSidebar() { side.view.isHidden.toggle(); split.adjustSubviews(); if !side.view.isHidden { split.setPosition(260,ofDividerAt:0) } }
     func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat { 170 }
@@ -146,15 +148,20 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         }
     }
     func quickOpen() { if root == nil { chooseFolder() } else { quick.show(in:window) } }
-    func openFolder(_ url: URL) {
+    func cancelWorkspaceJobs() {
+        queryJob?.cancel(); indexJob?.cancel(); gitJob?.cancel(); eventTask?.cancel()
+    }
+    func openFolder(_ url: URL, remember: Bool = true) {
+        let folder = url.resolvingSymlinksInPath().standardizedFileURL
+        guard folder.isFileURL, (try? folder.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { return }
         guard documents.allSatisfy({ confirmClosing($0) }) else { return }
-        queryJob?.cancel(); indexJob?.cancel(); eventTask?.cancel(); repoMonitor = nil; gitMonitor = nil
+        cancelWorkspaceJobs()
         projectVersion += 1; loadVersion += 1; queryVersion += 1
-        root = url.resolvingSymlinksInPath().standardizedFileURL; quick.folder = root; documents = []; targets = [:]; back = []; forward = []; quick.paths = []
-        side.reset(root!); selectSection(.files); show(nil)
+        root = folder; quick.folder = folder; documents = []; targets = [:]; back = []; forward = []; quick.paths = []
+        side.reset(folder); selectSection(.files); show(nil)
         window.title = "\(url.lastPathComponent) — CyberPeek"; projectButton.title = "  \(url.lastPathComponent)"
-        UserDefaults.standard.set(url.path,forKey:"lastFolder")
-        monitor = WorkspaceMonitor(url:root!) { [weak self] in self?.scheduleRefresh() }
+        if remember { UserDefaults.standard.set(folder.path,forKey:"lastFolder") }
+        monitor = WorkspaceMonitor(url:folder) { [weak self] in self?.scheduleRefresh() }
         refresh()
     }
     func scheduleRefresh() {
@@ -174,15 +181,23 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
                 self.quick.paths = paths
             }
         }
+        refreshGit(in: root)
+        if side.section == .files { side.reload() }
+        if !side.query.stringValue.isEmpty { search(side.query.stringValue) }
+        checkDisk()
+    }
+    private func refreshGit(in root: URL) {
+        gitJob?.cancel()
+        let job = ShellJob(); gitJob = job
+        let version = projectVersion
         gitVersion += 1; let pass = gitVersion
         DispatchQueue.global(qos:.utility).async {
-            let result = Result { try GitState.read(root) }
+            let result = Result { try GitState.read(root, job: job) }
             DispatchQueue.main.async {
                 guard self.projectVersion == version, self.gitVersion == pass else { return }
                 switch result {
                 case let .success(state):
                     self.side.git = state; self.branch.stringValue = state.branch
-                    self.watchRepository(state, folder:root)
                 case let .failure(error):
                     self.side.git = nil
                     self.side.gitMessage = error.localizedDescription.contains("not a git repository") ? "当前文件夹没有 Git 仓库" : error.localizedDescription
@@ -191,9 +206,6 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
                 if self.side.section == .git { self.side.reload() }
             }
         }
-        if side.section == .files { side.reload() }
-        if !side.query.stringValue.isEmpty { search(side.query.stringValue) }
-        checkDisk()
         if let doc = current, let change = doc.change, change.revision == nil, let repo = side.git?.repo {
             DispatchQueue.global(qos:.utility).async {
                 let patch = try? GitState(repo:repo).diff(change)
@@ -201,14 +213,6 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
                     if self.gitVersion == pass, self.current === doc, let patch, doc.text.string != patch { doc.replace(patch) }
                 }
             }
-        }
-    }
-    private func watchRepository(_ state: GitState, folder: URL) {
-        if repoMonitor == nil, state.repo.path != folder.path {
-            repoMonitor = WorkspaceMonitor(url:state.repo) { [weak self] in self?.scheduleRefresh() }
-        }
-        if gitMonitor == nil, let metadata = state.gitDirectory, !metadata.path.hasPrefix(state.repo.path + "/") {
-            gitMonitor = WorkspaceMonitor(url:metadata) { [weak self] in self?.scheduleRefresh() }
         }
     }
     func search(_ query: String) {

@@ -3,9 +3,7 @@ import XCTest
 
 final class MarkdownTests: XCTestCase {
     @MainActor func testOpenEditAndSaveMarkdownWithVisibleStyles() throws {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: folder) }
+        let folder = try makeTestWorkspace()
         let file = folder.appendingPathComponent("笔记.MARKDOWN")
         let source = """
         # 标题🍓

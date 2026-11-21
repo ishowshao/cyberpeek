@@ -174,19 +174,17 @@ struct GitState {
     var changes: [Change] = []
     var commits: [Commit] = []
     var branch = ""
-    var gitDirectory: URL?
     var repo: URL
-    static func read(_ folder: URL) throws -> GitState {
-        let job = ShellJob()
-        func git(_ args: [String], at url: URL) throws -> Data { try job.run(Tools.git, args, in: url) }
+    var pathspec: [String] = []
+    static func read(_ folder: URL, job: ShellJob = ShellJob()) throws -> GitState {
+        func git(_ args: [String], at url: URL) throws -> Data { try job.run(Tools.git, ["--literal-pathspecs"] + args, in: url) }
         let top = try git(["rev-parse", "--show-toplevel"], at: folder)
         let root = URL(fileURLWithPath: String(decoding: top.dropLast(), as: UTF8.self))
-        let output = try git(["status", "--porcelain=v1", "-z", "-b", "--untracked-files=all"], at: root)
+        let relative = workspaceRelativePath(of: folder.resolvingSymlinksInPath(), from: root)
+        let pathspec = relative == "." ? [] : ["--", relative]
+        let output = try git(["status", "--porcelain=v1", "-z", "-b", "--untracked-files=all"] + pathspec, at: root)
         let rows = output.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
-        var state = GitState(repo: root), i = 0
-        if let data = try? git(["rev-parse","--absolute-git-dir"], at: root) {
-            state.gitDirectory = URL(fileURLWithPath: String(decoding:data.dropLast(),as:UTF8.self))
-        }
+        var state = GitState(repo: root, pathspec: pathspec), i = 0
         while i < rows.count {
             let row = rows[i]; i += 1
             if row.hasPrefix("## ") {
@@ -204,7 +202,7 @@ struct GitState {
                 if status[1] != " " { state.changes.append(Change(path: path, oldPath: oldPath, flag: String(status[1]), area: .working)) }
             }
         }
-        if let data = try? git(["log", "-12", "--format=%H%x00%s", "-z"], at: root) {
+        if let data = try? git(["log", "-12", "--format=%H%x00%s", "-z"] + pathspec, at: root) {
             let parts = data.split(separator: 0, omittingEmptySubsequences: false)
             for index in stride(from: 0, to: max(0, parts.count-1), by: 2) {
                 state.commits.append(Commit(id: String(decoding: parts[index], as: UTF8.self), title: String(decoding: parts[index+1], as: UTF8.self)))
@@ -214,7 +212,7 @@ struct GitState {
     }
 
     func commitFiles(_ commit: String) throws -> [Change] {
-        let data = try ShellJob().run(Tools.git, ["diff-tree", "--root", "-m", "--first-parent", "--no-commit-id", "--name-status", "--no-renames", "-r", "-z", commit], in: repo)
+        let data = try ShellJob().run(Tools.git, ["--literal-pathspecs", "diff-tree", "--root", "-m", "--first-parent", "--no-commit-id", "--name-status", "--no-renames", "-r", "-z", commit] + pathspec, in: repo)
         let parts = data.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
         return stride(from: 0, to: max(0, parts.count-1), by: 2).map {
             Change(path: parts[$0+1], oldPath: nil, flag: parts[$0], area: .commit, revision: commit)

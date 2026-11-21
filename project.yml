@@ -2,6 +2,10 @@ name: CyberPeek
 options:
   deploymentTarget:
     macOS: "14.0"
+settings:
+  configs:
+    Release:
+      ARCHS: arm64
 targets:
   CyberPeek:
     type: application

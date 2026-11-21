@@ -30,7 +30,7 @@ Tree-sitter 提供 Markdown、Swift、JavaScript / JSX、TypeScript / TSX、Pyth
 
 ## 构建
 
-在 Xcode 中打开 `CyberPeek.xcodeproj` 运行 CyberPeek，也可以在终端执行：
+Release 默认构建 Apple Silicon（arm64）版本。可以在 Xcode 中打开 `CyberPeek.xcodeproj` 运行 CyberPeek，也可以在终端执行：
 
 ```sh
 xcodebuild -project CyberPeek.xcodeproj -scheme CyberPeek -configuration Release \

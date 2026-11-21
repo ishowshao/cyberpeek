@@ -2,7 +2,7 @@ import AppKit
 
 final class EditorFontSettings: NSObject {
     static let shared = EditorFontSettings(defaults: .standard)
-    static let defaultSize = 16
+    static let defaultSize = 24
     static let sizes = 9...32
     static let didChange = Notification.Name("CyberPeek.editorFontSizeDidChange")
     private static let key = "editorFontSize"

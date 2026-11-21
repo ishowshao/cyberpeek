@@ -25,7 +25,7 @@ final class EditorFontTests: XCTestCase {
             XCTAssertTrue(menu.performKeyEquivalent(with: event), "⌘\(key)")
         }
 
-        XCTAssertEqual(settings.fonts.size, 16)
+        XCTAssertEqual(settings.fonts.size, 24)
         try choose(19)
         let reopened = EditorFontSettings(defaults: try XCTUnwrap(UserDefaults(suiteName: suite)))
         XCTAssertEqual(reopened.fonts.size, 19)
@@ -42,7 +42,7 @@ final class EditorFontTests: XCTestCase {
         menu.update()
         XCTAssertFalse(try XCTUnwrap(menu.item(withTitle: "缩小字号")).isEnabled)
         try press("0", code: 29)
-        XCTAssertEqual(settings.fonts.size, 16)
+        XCTAssertEqual(settings.fonts.size, 24)
     }
 
     @MainActor func testOpenEditorsKeepMarkupSelectionAndUndoWhenResized() throws {
@@ -70,8 +70,8 @@ final class EditorFontTests: XCTestCase {
         defer { windows.forEach { $0.orderOut(nil) } }
         let range = (markdown.text.string as NSString).range(of: "加粗斜体")
         markdown.text.setSelectedRange(range)
-        let expectedFamily = NSFont(name: "Menlo", size: 16)?.familyName
-            ?? NSFont.monospacedSystemFont(ofSize: 16, weight: .regular).familyName
+        let expectedFamily = NSFont(name: "Menlo", size: 24)?.familyName
+            ?? NSFont.monospacedSystemFont(ofSize: 24, weight: .regular).familyName
         func checkMarkdown(_ points: CGFloat) {
             let styled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
                 guard let font = markdown.text.textStorage?.attribute(.font, at: range.location,
@@ -81,16 +81,16 @@ final class EditorFontTests: XCTestCase {
             }, object: nil)
             XCTAssertEqual(XCTWaiter.wait(for: [styled], timeout: 3), .completed)
         }
-        checkMarkdown(16)
-        settings.setSize(24)
         checkMarkdown(24)
+        settings.setSize(18)
+        checkMarkdown(18)
         XCTAssertEqual(markdown.text.selectedRange(), range)
         XCTAssertFalse(markdown.dirty)
         let patchFont = patch.text.textStorage?.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
-        XCTAssertEqual(patchFont?.pointSize, 24)
+        XCTAssertEqual(patchFont?.pointSize, 18)
         XCTAssertEqual(patchFont?.familyName, expectedFamily)
         XCTAssertEqual(patch.text.textStorage?.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor, Palette.green)
-        XCTAssertEqual(settings.fonts.lineNumber.pointSize, 22)
+        XCTAssertEqual(settings.fonts.lineNumber.pointSize, 16)
         XCTAssertEqual(settings.fonts.lineNumber.familyName, expectedFamily)
         XCTAssertTrue(plain.dirty)
         XCTAssertEqual(plain.text.string, "草稿!")
@@ -99,7 +99,7 @@ final class EditorFontTests: XCTestCase {
         let empty = try editor("new.txt", "")
         empty.text.insertText("新", replacementRange: NSRange(location: 0, length: 0))
         let typed = empty.text.textStorage?.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
-        XCTAssertEqual(typed?.pointSize, 24)
+        XCTAssertEqual(typed?.pointSize, 18)
         XCTAssertEqual(typed?.familyName, expectedFamily)
     }
 }

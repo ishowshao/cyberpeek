@@ -72,7 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc func save() { workbench.save() }
     @objc func copyFile() { workbench.saveCopy() }
-    @objc func closeTab() { if let doc = workbench.current { workbench.close(doc) } else { workbench.window.performClose(nil) } }
+    @objc func closeTab() { if let doc = workbench.activeDocument { workbench.close(doc) } else { workbench.window.performClose(nil) } }
     @objc func quickOpen() { workbench.quickOpen() }
     @objc func files() { workbench.selectSection(.files) }
     @objc func search() { workbench.selectSection(.search) }
@@ -81,7 +81,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func back() { workbench.navigate(backwards:true) }
     @objc func forward() { workbench.navigate(backwards:false) }
     @objc func find(_ sender: NSMenuItem) {
-        guard let view = workbench.current?.text else { return }
+        guard let editor = workbench.current else { return }
+        if editor.showsSVGPreview { editor.showsSVGPreview = false; workbench.show(editor) }
+        let view = editor.text
         workbench.window.makeFirstResponder(view)
         view.performTextFinderAction(sender)
     }

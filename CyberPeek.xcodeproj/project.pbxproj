@@ -7,9 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		11F5F791BFD1963F5A0492BC /* ImagePreviewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 716FFB419840FA08A5D7E3A3 /* ImagePreviewTests.swift */; };
 		1F779168E90997C04FCB506C /* Interface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0EA27A682B99DFD6A63A6371 /* Interface.swift */; };
 		35D6283E4DDDEF6A5F25B38A /* DocumentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93ACEA717C03BF20A59B5602 /* DocumentTests.swift */; };
 		40301348EB65DFAB3EF89CFB /* Editor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 920FA3C9D6ACACDD1B847BC2 /* Editor.swift */; };
+		435A07B64A1F27C1F58BED3B /* ImagePreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDB2F35275F106F70A787D31 /* ImagePreview.swift */; };
 		5E3B445FA25757B8BBC79494 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB3513CB756295F478D367B1 /* main.swift */; };
 		736798FC7C30FA03637F8529 /* Syntax.c in Sources */ = {isa = PBXBuildFile; fileRef = 50FBB6A654A9255F24CB88F9 /* Syntax.c */; };
 		866349A56DAC728AA7F31CAC /* Markdown.c in Sources */ = {isa = PBXBuildFile; fileRef = 753DD38C3CEA93D7B03B1F33 /* Markdown.c */; };
@@ -45,6 +47,7 @@
 		5F9893847237EA912766161F /* Workbench.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Workbench.swift; sourceTree = "<group>"; };
 		607C95581F13EEC48AB1A502 /* CyberPeek.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CyberPeek.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		70E866BCEB5FA285835F880B /* Workspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Workspace.swift; sourceTree = "<group>"; };
+		716FFB419840FA08A5D7E3A3 /* ImagePreviewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePreviewTests.swift; sourceTree = "<group>"; };
 		753DD38C3CEA93D7B03B1F33 /* Markdown.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = Markdown.c; sourceTree = "<group>"; };
 		789FC141BB520CA331074415 /* CyberPeekTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CyberPeekTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		7A88BF9C18210D390FEC5C27 /* CyberPeek.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = CyberPeek.icns; sourceTree = "<group>"; };
@@ -57,6 +60,7 @@
 		B53D34E8E4FBB5E76EC9695B /* GitLineChanges.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitLineChanges.swift; sourceTree = "<group>"; };
 		BAABA375732E1EE776992FB7 /* MarkdownTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownTests.swift; sourceTree = "<group>"; };
 		BB3513CB756295F478D367B1 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		BDB2F35275F106F70A787D31 /* ImagePreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePreview.swift; sourceTree = "<group>"; };
 		BF4DFB0DD97BD6F5C588E682 /* EditorFontSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorFontSettings.swift; sourceTree = "<group>"; };
 		CDDA2642F7C57FECBFB89B8E /* EditorFontTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorFontTests.swift; sourceTree = "<group>"; };
 		DF8CB72B554D9CAFA154B176 /* QuickOpen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickOpen.swift; sourceTree = "<group>"; };
@@ -72,6 +76,7 @@
 				920FA3C9D6ACACDD1B847BC2 /* Editor.swift */,
 				BF4DFB0DD97BD6F5C588E682 /* EditorFontSettings.swift */,
 				B53D34E8E4FBB5E76EC9695B /* GitLineChanges.swift */,
+				BDB2F35275F106F70A787D31 /* ImagePreview.swift */,
 				9A85CF015D6F4E6BCE0BF234 /* Info.plist */,
 				0EA27A682B99DFD6A63A6371 /* Interface.swift */,
 				BB3513CB756295F478D367B1 /* main.swift */,
@@ -102,6 +107,7 @@
 				93ACEA717C03BF20A59B5602 /* DocumentTests.swift */,
 				CDDA2642F7C57FECBFB89B8E /* EditorFontTests.swift */,
 				9D87ECCA23500838C64F08B6 /* GitLineTests.swift */,
+				716FFB419840FA08A5D7E3A3 /* ImagePreviewTests.swift */,
 				BAABA375732E1EE776992FB7 /* MarkdownTests.swift */,
 				E51A7290A835BBF6AA959A7F /* WorkspaceTests.swift */,
 			);
@@ -250,6 +256,7 @@
 				40301348EB65DFAB3EF89CFB /* Editor.swift in Sources */,
 				BBA2D39ECA74363720E53F0D /* EditorFontSettings.swift in Sources */,
 				9CDD859A99858AAFCD71AE12 /* GitLineChanges.swift in Sources */,
+				435A07B64A1F27C1F58BED3B /* ImagePreview.swift in Sources */,
 				1F779168E90997C04FCB506C /* Interface.swift in Sources */,
 				866349A56DAC728AA7F31CAC /* Markdown.c in Sources */,
 				BDE08AA518CA3ED1F6CA98D4 /* QuickOpen.swift in Sources */,
@@ -268,6 +275,7 @@
 				35D6283E4DDDEF6A5F25B38A /* DocumentTests.swift in Sources */,
 				88EB2F911D9096C237637497 /* EditorFontTests.swift in Sources */,
 				C05B333B844EB00A6A0223C6 /* GitLineTests.swift in Sources */,
+				11F5F791BFD1963F5A0492BC /* ImagePreviewTests.swift in Sources */,
 				C832E8A2D2E5CAC07D2EBEE0 /* MarkdownTests.swift in Sources */,
 				C229B36BBC350CDA802E2267 /* WorkspaceTests.swift in Sources */,
 			);

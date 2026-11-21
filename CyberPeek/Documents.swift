@@ -1,16 +1,39 @@
 import AppKit
 
+class DocumentTab: NSObject {
+    let url: URL
+    let identity: String
+    let title: String
+    var pinned = false
+    var dirty = false
+
+    init(url: URL, identity: String, title: String) {
+        self.url = url
+        self.identity = identity
+        self.title = title
+    }
+}
+
+private enum OpenedContent {
+    case text(String, DiskText?)
+    case image(RasterImage?, ImageFileVersion?)
+}
+
 extension Workbench {
+    private var currentLocation: Location? {
+        guard let doc = activeDocument, let target = targets[doc.identity] else { return nil }
+        let cursor = current?.cursor ?? (line: 1, column: 1)
+        return Location(target: target, line: cursor.line, column: cursor.column - 1)
+    }
     private func rememberLocation() {
-        guard let doc = current, let target = targets[doc.identity] else { return }
-        back.append(Location(target:target,line:doc.cursor.line,column:doc.cursor.column-1))
+        guard let currentLocation else { return }
+        back.append(currentLocation)
         if back.count > 150 { back.removeFirst() }; forward.removeAll()
     }
     func navigate(backwards: Bool) {
         let next = backwards ? back.popLast() : forward.popLast()
         guard let next else { return }
-        if let current, let target = targets[current.identity] {
-            let place = Location(target:target,line:current.cursor.line,column:current.cursor.column-1)
+        if let place = currentLocation {
             if backwards { forward.append(place) } else { back.append(place) }
         }
         open(next.target,line:next.line,column:next.column,record:false)
@@ -28,36 +51,48 @@ extension Workbench {
             title = "\(url.lastPathComponent) (\(rev.isEmpty ? "暂存区" : String(rev.prefix(7))))"
         }
         loadVersion += 1; let version = loadVersion
-        func activate(_ doc: Editor) {
-            if record, current !== doc || line != nil { rememberLocation() }
+        func activate(_ doc: DocumentTab) {
+            if record, activeDocument !== doc || line != nil { rememberLocation() }
             if pin { doc.pinned = true }
+            let editor = doc as? Editor
+            if line != nil { editor?.showsSVGPreview = false }
             targets[id] = target; show(doc)
-            if let line { doc.go(line,column:column,length:length) }
-            window.makeFirstResponder(doc.text)
+            if let line { editor?.go(line,column:column,length:length) }
         }
         if let old = documents.first(where:{ $0.identity == id }) {
             activate(old); refreshSelectedDocument(); return
         }
         statusMessage.stringValue = "正在打开…"
         DispatchQueue.global(qos:.userInitiated).async {
-            let result = Result { () throws -> (String,DiskText?) in
+            let result = Result { () throws -> OpenedContent in
+                let isImage = RasterImage.extensions.contains(url.pathExtension.lowercased())
                 switch target {
                 case .file:
-                    let disk = try DiskText.read(url); return (disk.text,disk)
+                    if isImage {
+                        let version = try ImageFileVersion(url)
+                        return .image(try? RasterImage(url: url), version)
+                    }
+                    let disk = try DiskText.read(url); return .text(disk.text,disk)
                 case let .patch(repo,c):
-                    let patch = try GitState(repo:repo).diff(c); return (patch.isEmpty ? "没有文本差异" : patch,nil)
+                    let patch = try GitState(repo:repo).diff(c); return .text(patch.isEmpty ? "没有文本差异" : patch,nil)
                 case let .blob(repo, rev, path):
                     let data = try ShellJob().run(Tools.git, ["show","\(rev):\(path)"], in:repo)
-                    return (try DiskText(data).text,nil)
+                    return isImage ? .image(try? RasterImage(data: data), nil) : .text(try DiskText(data).text,nil)
                 }
             }
             DispatchQueue.main.async {
                 guard self.loadVersion == version else { return }
                 self.statusMessage.stringValue = ""
                 do {
-                    let (source,disk) = try result.get()
-                    let doc = Editor(url:url,identity:id,title:title,source:source,disk:disk,change:change,patch:change != nil)
-                    self.wire(doc)
+                    let doc: DocumentTab
+                    switch try result.get() {
+                    case let .text(source, disk):
+                        let editor = Editor(url:url,identity:id,title:title,source:source,disk:disk,change:change,patch:change != nil)
+                        self.wire(editor)
+                        doc = editor
+                    case let .image(image, version):
+                        doc = ImageDocument(url: url, identity: id, title: title, image: image, diskVersion: version)
+                    }
                     var replacedID: String?
                     if let preview = self.documents.firstIndex(where:{ !$0.pinned && !$0.dirty }) {
                         replacedID = self.documents[preview].identity
@@ -73,7 +108,10 @@ extension Workbench {
         doc.onChange = { [weak self, weak doc] contentChanged in
             guard let self else { return }
             self.statusMessage.stringValue = ""; self.updateTabs(); self.updateStatus()
-            if contentChanged, self.current === doc { self.refreshLineChanges() }
+            if contentChanged, let doc, self.current === doc {
+                if doc.showsSVGPreview { self.imagePreview.showSVG(doc.text.string, name: doc.title) }
+                self.refreshLineChanges()
+            }
         }
         doc.onCursor = { [weak self,weak doc] in if self?.current === doc { self?.updateStatus() } }
         doc.onDiffLine = { [weak self,weak doc] line in
@@ -84,24 +122,43 @@ extension Workbench {
             } else { self.open(.file(doc.url),line:line,pin:true) }
         }
     }
-    func show(_ doc: Editor?) {
-        current = doc
+    func show(_ doc: DocumentTab?) {
+        activeDocument = doc
         updateBranch()
         crumbBar.isHidden = doc == nil
+        let editor = current
+        let previewingSVG = editor?.showsSVGPreview == true
+        previewButton.isHidden = editor?.supportsSVGPreview != true
+        previewButton.image = symbol(previewingSVG ? "chevron.left.forwardslash.chevron.right" : "eye", size: 13)
+        let action = previewingSVG ? "查看 SVG 源代码" : "预览 SVG"
+        previewButton.toolTip = action
+        previewButton.setAccessibilityLabel(action)
         if let url = breadcrumbURL, let root {
             let path = workspaceRelativePath(of: url, from: root)
-            crumb.stringValue = path.components(separatedBy: "/").joined(separator: "    ›    ") + (doc?.isPatch == true ? "    ›    Diff" : "")
+            crumb.stringValue = path.components(separatedBy: "/").joined(separator: "    ›    ") + (editor?.isPatch == true ? "    ›    Diff" : "")
         }
         editorHost.subviews.forEach { $0.removeFromSuperview() }
-        editorHost.place(doc?.view ?? welcome)
+        if let imageDoc = doc as? ImageDocument {
+            editorHost.place(imagePreview)
+            imagePreview.show(imageDoc.image, name: imageDoc.title)
+            window.makeFirstResponder(imagePreview)
+        } else if let editor, previewingSVG {
+            editorHost.place(imagePreview)
+            imagePreview.showSVG(editor.text.string, name: editor.title)
+            window.makeFirstResponder(imagePreview)
+        } else {
+            imagePreview.clear()
+            editorHost.place(editor?.view ?? welcome)
+            if let editor { window.makeFirstResponder(editor.text); editor.becameVisible() }
+        }
         updateTabs(); updateStatus()
         refreshLineChanges()
-        if let doc { window.makeFirstResponder(doc.text); side.reveal(doc.url); doc.becameVisible() }
+        if let doc { side.reveal(doc.url) }
     }
     var breadcrumbURL: URL? {
-        guard let current else { return nil }
-        if case let .file(openedURL)? = targets[current.identity] { return openedURL }
-        return current.url
+        guard let activeDocument else { return nil }
+        if case let .file(openedURL)? = targets[activeDocument.identity] { return openedURL }
+        return activeDocument.url
     }
     func copyRelativePath(of url: URL) {
         guard let root else { return }
@@ -113,12 +170,12 @@ extension Workbench {
         tabs.arrangedSubviews.forEach { tabs.removeArrangedSubview($0); $0.removeFromSuperview() }
         var width: CGFloat = 0, selectedFrame = NSRect.zero
         for doc in documents {
-            let selected = current === doc
-            let button = ActionButton("  " + doc.title,icon:doc.isPatch ? "plus.forwardslash.minus" : kindIcon(doc.url.path).0,
+            let selected = activeDocument === doc
+            let button = ActionButton("  " + doc.title,icon:(doc as? Editor)?.isPatch == true ? "plus.forwardslash.minus" : kindIcon(doc.url.path).0,
                                       tip:doc.url.path,size:13) { [weak self,weak doc] in
                 guard let self, let doc else { return }
                 self.loadVersion += 1
-                if self.current !== doc { self.rememberLocation() }
+                if self.activeDocument !== doc { self.rememberLocation() }
                 if NSApp.currentEvent?.clickCount == 2 { doc.pinned = true }
                 self.show(doc); self.refreshSelectedDocument()
             }
@@ -145,24 +202,30 @@ extension Workbench {
         if !selectedFrame.isEmpty { tabs.scrollToVisible(selectedFrame) }
     }
     func updateStatus() {
+        if let doc = activeDocument as? ImageDocument {
+            conflictBar.isHidden = true
+            position.stringValue = doc.image.map { "\(Int($0.size.width)) × \(Int($0.size.height)) px" } ?? ""
+            format.stringValue = doc.url.pathExtension.uppercased()
+            return
+        }
         guard let doc = current else {
             conflictBar.isHidden = true; position.stringValue = ""; format.stringValue = ""; return
         }
         conflictBar.isHidden = !doc.conflict
-        position.stringValue = "行 \(doc.cursor.line)，列 \(doc.cursor.column)"
+        position.stringValue = doc.showsSVGPreview ? "" : "行 \(doc.cursor.line)，列 \(doc.cursor.column)"
         let encoding = doc.base?.encoding
         let codec = encoding == .utf16LittleEndian ? "UTF-16 LE" : encoding == .utf16BigEndian ? "UTF-16 BE" : "UTF-8"
         format.stringValue = (doc.base == nil ? "只读" : "\(codec)     \(doc.base?.crlf == true ? "CRLF" : "LF")") + "     " + (doc.isPatch ? "Diff" : doc.url.pathExtension.uppercased())
     }
-    func close(_ doc: Editor) {
+    func close(_ doc: DocumentTab) {
         guard confirmClosing(doc), let index = documents.firstIndex(where:{ $0 === doc }) else { return }
         loadVersion += 1
         documents.remove(at:index); targets.removeValue(forKey:doc.identity)
-        if current === doc { show(documents.isEmpty ? nil : documents[min(index,documents.count-1)]) }
+        if activeDocument === doc { show(documents.isEmpty ? nil : documents[min(index,documents.count-1)]) }
         else { updateTabs() }
     }
-    func confirmClosing(_ doc: Editor) -> Bool {
-        guard doc.dirty else { return true }
+    func confirmClosing(_ tab: DocumentTab) -> Bool {
+        guard let doc = tab as? Editor, doc.dirty else { return true }
         let alert = NSAlert(); alert.messageText = "保存对 \(doc.title) 的修改？"
         alert.addButton(withTitle:"保存"); alert.addButton(withTitle:"取消"); alert.addButton(withTitle:"放弃修改")
         switch alert.runModal() {
@@ -192,6 +255,23 @@ extension Workbench {
         }
     }
     func checkDisk() {
+        if let image = activeDocument as? ImageDocument, case .file? = targets[image.identity] {
+            diskVersion += 1
+            let token = diskVersion, previous = image.diskVersion
+            DispatchQueue.global(qos: .utility).async {
+                let version = try? ImageFileVersion(image.url)
+                guard version != previous else { return }
+                let updated = try? RasterImage(url: image.url)
+                DispatchQueue.main.async {
+                    guard self.diskVersion == token, self.activeDocument === image else { return }
+                    image.diskVersion = version
+                    image.image = updated
+                    self.imagePreview.show(updated, name: image.title)
+                    self.updateStatus()
+                }
+            }
+            return
+        }
         guard let doc = current, let base = doc.base else { return }
         diskVersion += 1; let token = diskVersion
         DispatchQueue.global(qos:.utility).async {

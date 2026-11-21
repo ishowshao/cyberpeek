@@ -152,7 +152,7 @@ private final class EditorLineBackground: NSView, NSViewToolTipOwner {
     }
 }
 
-final class Editor: NSObject, NSTextViewDelegate {
+final class Editor: DocumentTab, NSTextViewDelegate {
     let view = NSView()
     let text = SourceTextView(usingTextLayoutManager: true)
     let scroll = OverlayScrollView()
@@ -164,13 +164,10 @@ final class Editor: NSObject, NSTextViewDelegate {
         lineStarts.count - (lineStarts.last == text.textStorage?.length ? 1 : 0)
     }
     fileprivate let fontSettings: EditorFontSettings
-    let url: URL
     let change: Change?
-    let identity: String
-    let title: String
     var base: DiskText?
-    var pinned = false
-    private(set) var dirty = false
+    var supportsSVGPreview: Bool { !isPatch && url.pathExtension.lowercased() == "svg" }
+    var showsSVGPreview = false
     var conflict = false
     var onChange: ((_ contentChanged: Bool) -> Void)?
     var onCursor: (() -> Void)?
@@ -188,9 +185,9 @@ final class Editor: NSObject, NSTextViewDelegate {
     init(url: URL, identity: String, title: String, source: String, disk: DiskText? = nil,
          change: Change? = nil, patch: Bool = false, fontSettings: EditorFontSettings = .shared) {
         self.fontSettings = fontSettings
-        self.url = url; self.identity = identity; self.title = title; base = disk; self.change = change; isPatch = patch
+        base = disk; self.change = change; isPatch = patch
         worker = SyntaxWorker(ext: patch ? "" : url.pathExtension.lowercased())
-        super.init()
+        super.init(url: url, identity: identity, title: title)
         view.fill(Palette.canvas); lineBackground.owner = self
         text.isRichText = false; text.allowsUndo = disk != nil; text.isEditable = disk != nil
         text.isAutomaticQuoteSubstitutionEnabled = false; text.isAutomaticDashSubstitutionEnabled = false
@@ -215,6 +212,11 @@ final class Editor: NSObject, NSTextViewDelegate {
         scroll.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(redraw), name: NSView.boundsDidChangeNotification, object: scroll.contentView)
         NotificationCenter.default.addObserver(self, selector: #selector(fontSizeChanged), name: EditorFontSettings.didChange, object: fontSettings)
+        if let undo = text.undoManager, disk != nil {
+            for event in [Notification.Name.NSUndoManagerDidUndoChange, .NSUndoManagerDidRedoChange] {
+                NotificationCenter.default.addObserver(self, selector: #selector(edited), name: event, object: undo)
+            }
+        }
         text.delegate = self
         text.lineActivated = { [weak self] in
             if let self, let n = self.patchTargetLine() { self.onDiffLine?(n) }
@@ -363,6 +365,10 @@ final class Editor: NSObject, NSTextViewDelegate {
         text.setSelectedRange(range); text.scrollRangeToVisible(range); redraw()
     }
     func textDidChange(_ notification: Notification) {
+        if let manager = text.undoManager, manager.isUndoing || manager.isRedoing { return }
+        edited()
+    }
+    @objc private func edited() {
         guard !replacing else { return }
         dirty = text.string != base?.text; pinned = true
         indexLines(); highlight(); redraw(); onChange?(true)

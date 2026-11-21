@@ -8,6 +8,12 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     let crumb = label("",11,color:Palette.muted), branch = label("",11), position = label("",11), format = label("",11)
     let statusMessage = label("",11,color:Palette.muted)
     let conflictBar = NSView(), crumbBar = NSView()
+    let imagePreview = ImagePreview()
+    lazy var previewButton = ActionButton(icon: "eye", tip: "预览 SVG", size: 13) { [weak self] in
+        guard let self, let editor = self.current, editor.supportsSVGPreview else { return }
+        editor.showsSVGPreview.toggle()
+        self.show(editor)
+    }
     private lazy var previousChange = ActionButton(icon: "arrow.up", tip: "上一个 Git 变更", size: 12) { [weak self] in
         self?.current?.navigateChange(forward: false)
     }
@@ -17,7 +23,8 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     let pathPasteboard: NSPasteboard
     var projectButton: ActionButton!
     var activity: [Section:(ActionButton,NSView)] = [:]
-    var root: URL?, documents = [Editor](), current: Editor?
+    var root: URL?, documents = [DocumentTab](), activeDocument: DocumentTab?
+    var current: Editor? { activeDocument as? Editor }
     var monitor: WorkspaceMonitor?, eventTask: DispatchWorkItem?
     private var gitJob: ShellJob?
     private var queuedGitPaths = Set<String>()
@@ -120,8 +127,8 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         let breadcrumb = stack([crumb, copyPath], spacing: 3)
         breadcrumb.translatesAutoresizingMaskIntoConstraints = false
         crumbBar.addSubview(breadcrumb)
-        let changeButtons = stack([previousChange, nextChange], spacing: 2)
-        for button in [previousChange, nextChange] { button.width(24); button.height(24) }
+        let changeButtons = stack([previewButton, previousChange, nextChange], spacing: 2)
+        for button in [previewButton, previousChange, nextChange] { button.width(24); button.height(24) }
         changeButtons.translatesAutoresizingMaskIntoConstraints = false
         crumbBar.addSubview(changeButtons)
         NSLayoutConstraint.activate([
@@ -163,7 +170,7 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
             pair.0.contentTintColor = key == section ? Palette.text : Palette.muted; pair.1.isHidden = key != section
         }
         side.switchTo(section)
-        if let current { side.reveal(current.url) }
+        if let activeDocument { side.reveal(activeDocument.url) }
         if section == .search { window.makeFirstResponder(side.query) }
         if section == .git { refreshGit() }
     }
@@ -308,12 +315,12 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     }
     func updateBranch() {
         let repository: GitState?
-        switch current.flatMap({ targets[$0.identity] }) {
+        switch activeDocument.flatMap({ targets[$0.identity] }) {
         case let .patch(repo, _), let .blob(repo, _, _):
             repository = side.git?.repositories.first { $0.repo.path == repo.path }
         default:
             // With no tab, only show a branch if the workspace itself belongs to a repo.
-            repository = (current?.url ?? root).flatMap { side.git?.repository(containing: $0.path) }
+            repository = (activeDocument?.url ?? root).flatMap { side.git?.repository(containing: $0.path) }
         }
         branch.stringValue = repository?.branch ?? ""
         branch.toolTip = repository?.repo.path
@@ -323,7 +330,7 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     func refreshLineChanges() {
         defer { updateChangeButtons() }
         var immediate = GitLineChanges()
-        if let doc = current, doc.base != nil, let workspace = side.git, let git = workspace.repository(containing: doc.url.path), let root,
+        if let doc = current, !doc.showsSVGPreview, doc.base != nil, let workspace = side.git, let git = workspace.repository(containing: doc.url.path), let root,
            doc.url.pathComponents.starts(with: root.pathComponents) {
             let changes = workspace.fileTree.changes[doc.url.path] ?? []
             let parent = doc.url.deletingLastPathComponent().path

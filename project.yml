@@ -21,7 +21,11 @@ targets:
           - CFBundleTypeName: Source files and folders
             CFBundleTypeRole: Editor
             LSHandlerRank: Alternate
-            LSItemContentTypes: [public.text, public.source-code, public.folder, public.json, public.script]
+            LSItemContentTypes: [public.text, public.source-code, public.folder, public.json, public.script, public.svg-image]
+          - CFBundleTypeName: Web images
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [public.png, public.jpeg, com.compuserve.gif, org.webmproject.webp, public.avif, com.microsoft.ico, com.microsoft.bmp]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.hyoldman.cyberpeek

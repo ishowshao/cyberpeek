@@ -70,6 +70,7 @@ final class ActionButton: NSButton {
 }
 func kindIcon(_ path: String) -> (String, NSColor) {
     switch (path as NSString).pathExtension.lowercased() {
+    case let ext where ext == "svg" || RasterImage.extensions.contains(ext): return ("photo", Palette.green)
     case "swift": return ("swift", Palette.rgb(0xf19d7c))
     case "js","ts","jsx","tsx","mjs","c","cpp","h","m","py","rs","go","sh": return ("chevron.left.forwardslash.chevron.right", Palette.blue)
     case "json","yaml","yml","plist","toml": return ("curlybraces", Palette.rgb(0xd2be80))

@@ -170,8 +170,32 @@ struct Change: Hashable {
     var revision: String? = nil
 }
 struct Commit { let id: String; let title: String }
+
+struct GitFileTree {
+    private(set) var changes: [String: [Change]] = [:]
+    private(set) var changedDirectories: Set<String> = []
+    private(set) var deletedChildren: [String: Set<String>] = [:]
+
+    mutating func record(_ change: Change, repo: URL, folder: URL) {
+        var child = repo.appendingPathComponent(change.path, isDirectory: false)
+        changes[child.path, default: []].append(change)
+        while child.path != folder.path {
+            let parent = child.deletingLastPathComponent()
+            guard parent.path != child.path else { break }
+            let newDirectory = changedDirectories.insert(parent.path).inserted
+            if change.flag == "D" {
+                if !deletedChildren[parent.path, default: []].insert(child.lastPathComponent).inserted { break }
+            } else if !newDirectory {
+                break
+            }
+            child = parent
+        }
+    }
+}
+
 struct GitState {
     var changes: [Change] = []
+    var fileTree = GitFileTree()
     var commits: [Commit] = []
     var branch = ""
     var repo: URL
@@ -180,7 +204,8 @@ struct GitState {
         func git(_ args: [String], at url: URL) throws -> Data { try job.run(Tools.git, ["--literal-pathspecs"] + args, in: url) }
         let top = try git(["rev-parse", "--show-toplevel"], at: folder)
         let root = URL(fileURLWithPath: String(decoding: top.dropLast(), as: UTF8.self))
-        let relative = workspaceRelativePath(of: folder.resolvingSymlinksInPath(), from: root)
+        let workspace = folder.resolvingSymlinksInPath().standardizedFileURL
+        let relative = workspaceRelativePath(of: workspace, from: root)
         let pathspec = relative == "." ? [] : ["--", relative]
         let output = try git(["status", "--porcelain=v1", "-z", "-b", "--untracked-files=all"] + pathspec, at: root)
         let rows = output.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
@@ -201,6 +226,9 @@ struct GitState {
                 if status[0] != " " { state.changes.append(Change(path: path, oldPath: oldPath, flag: String(status[0]), area: .staged)) }
                 if status[1] != " " { state.changes.append(Change(path: path, oldPath: oldPath, flag: String(status[1]), area: .working)) }
             }
+        }
+        for change in state.changes {
+            state.fileTree.record(change, repo: root, folder: workspace)
         }
         if let data = try? git(["log", "-12", "--format=%H%x00%s", "-z"] + pathspec, at: root) {
             let parts = data.split(separator: 0, omittingEmptySubsequences: false)

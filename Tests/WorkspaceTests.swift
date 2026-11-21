@@ -13,6 +13,84 @@ extension XCTestCase {
 }
 
 final class WorkspaceTests: XCTestCase {
+    @MainActor func testExplorerShowsGitChangesAndOpensDeletedFileDiff() throws {
+        let repo = try makeTestWorkspace()
+        let root = repo.appendingPathComponent("src [1]", isDirectory: true)
+        let removed = root.appendingPathComponent("old/nested/gone.md")
+        try FileManager.default.createDirectory(at: removed.deletingLastPathComponent(), withIntermediateDirectories: true)
+        func write(_ name: String, _ text: String) throws {
+            try text.write(to: root.appendingPathComponent(name), atomically: true, encoding: .utf8)
+        }
+        func git(_ args: String...) throws {
+            try ShellJob().run(Tools.git, ["-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                                          "-c", "commit.gpgSign=false", "-c", "core.hooksPath=/dev/null"] + args, in: root)
+        }
+        try ShellJob().run(Tools.git, ["init", "-q"], in: repo)
+        for name in ["changed.md", "clean.md", "before.md", "old/nested/gone.md"] { try write(name, name + "\n") }
+        try git("add", ".")
+        try git("commit", "-qm", "Initial files")
+        try git("mv", "before.md", "after.md")
+        try write("changed.md", "modified\n")
+        try write("new.md", "staged\n")
+        try git("add", "new.md")
+        try write("new.md", "working\n")
+        let longName = String(repeating: "很长的文件名", count: 5) + ".md"
+        try write(longName, "untracked\n")
+        try FileManager.default.removeItem(at: root.appendingPathComponent("old"))
+
+        let bench = Workbench()
+        bench.window.orderFront(nil)
+        defer { bench.cancelWorkspaceJobs(); bench.window.orderOut(nil) }
+        bench.openFolder(root, remember: false)
+        func waitFor(_ predicate: @escaping () -> Bool) {
+            let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in predicate() }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 6), .completed)
+        }
+        func descendants<T: NSView>(_ type: T.Type, of view: NSView) -> [T] {
+            if let match = view as? T { return [match] }
+            return view.subviews.flatMap { descendants(type, of: $0) }
+        }
+        let outline = try XCTUnwrap(descendants(NSOutlineView.self, of: bench.side.view).first)
+        func row(_ name: String) -> Int? {
+            (0..<outline.numberOfRows).first { (outline.item(atRow: $0) as? SideNode)?.name == name }
+        }
+        func labels(_ name: String) -> [String] {
+            guard let i = row(name), let cell = outline.view(atColumn: 0, row: i, makeIfNecessary: true) else { return [] }
+            return descendants(NSTextField.self, of: cell).map(\.stringValue)
+        }
+        waitFor { labels("changed.md") == ["changed.md", "M"] }
+        func checkBadgeFits(_ name: String) throws {
+            let cell = try XCTUnwrap(outline.view(atColumn: 0, row: try XCTUnwrap(row(name)), makeIfNecessary: true))
+            let badge = try XCTUnwrap(descendants(NSTextField.self, of: cell).last)
+            bench.side.view.layoutSubtreeIfNeeded()
+            let bounds = badge.convert(badge.bounds, to: outline)
+            XCTAssertLessThanOrEqual(bounds.maxX, outline.visibleRect.maxX - 4)
+            XCTAssertGreaterThanOrEqual(bounds.width, badge.intrinsicContentSize.width)
+        }
+        try checkBadgeFits("changed.md")
+        XCTAssertEqual(labels("new.md"), ["new.md", "AM"])
+        XCTAssertEqual(labels(longName), [longName, "U"])
+        XCTAssertEqual(labels("after.md"), ["after.md", "R"])
+        XCTAssertEqual(labels("clean.md"), ["clean.md"])
+        XCTAssertEqual(labels("old"), ["old", "•"])
+        for name in ["old", "nested"] { outline.expandItem(outline.item(atRow: try XCTUnwrap(row(name)))) }
+        XCTAssertEqual(labels("gone.md"), ["gone.md", "D"])
+        bench.split.setPosition(180, ofDividerAt: 0)
+        bench.window.contentView?.layoutSubtreeIfNeeded()
+        try checkBadgeFits("gone.md")
+        try checkBadgeFits(longName)
+        outline.selectRowIndexes(IndexSet(integer: try XCTUnwrap(row("gone.md"))), byExtendingSelection: false)
+        outline.sendAction(outline.doubleAction, to: outline.target)
+        waitFor { bench.current?.isPatch == true }
+        XCTAssertTrue(bench.current?.text.string.contains("-old/nested/gone.md") == true)
+
+        try git("restore", "--", "changed.md", "old")
+        try git("add", "new.md")
+        waitFor { labels("changed.md") == ["changed.md"] && labels("new.md") == ["new.md", "A"] }
+        XCTAssertEqual(labels("gone.md"), ["gone.md"])
+        XCTAssertEqual(labels("old"), ["old"])
+    }
+
     @MainActor func testHostUsesProjectFixtureAndInvalidPathsCannotChangeWorkspace() throws {
         let expected = URL(fileURLWithPath: #filePath).deletingLastPathComponent().standardizedFileURL
         let host = try XCTUnwrap(NSApp.delegate as? AppDelegate)

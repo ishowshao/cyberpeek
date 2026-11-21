@@ -94,7 +94,8 @@ func configureTable(_ table: NSTableView) {
     table.selectionHighlightStyle = .regular; table.rowHeight = 25
     table.intercellSpacing = .zero
 }
-func rowView(_ text: String, icon: String? = nil, color: NSColor = Palette.muted, detail: String? = nil, heading: Bool = false) -> NSView {
+func rowView(_ text: String, icon: String? = nil, color: NSColor = Palette.muted, detail: String? = nil,
+             detailColor: NSColor? = nil, heading: Bool = false) -> NSView {
     var views = [NSView]()
     if let icon {
         let image = NSImageView(image: symbol(icon, size: 13) ?? NSImage())
@@ -102,8 +103,12 @@ func rowView(_ text: String, icon: String? = nil, color: NSColor = Palette.muted
     }
     let title = label(text, heading ? 11 : 12, color: heading ? Palette.muted : Palette.text, weight: heading ? .semibold : .regular)
     views.append(title)
-    if let detail { views.append(label(detail, 10, color: color)) }
     let s = stack(views, spacing: 7)
+    if let detail {
+        let badge = label(detail, 10, color: detailColor ?? color)
+        badge.setContentCompressionResistancePriority(.required, for: .horizontal)
+        s.addView(badge, in: detailColor == nil ? .leading : .trailing)
+    }
     s.edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 8)
     let cell = NSTableCellView()
     cell.place(s)

@@ -136,7 +136,7 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         side.switchTo(section)
         if let current { side.reveal(current.url) }
         if section == .search { window.makeFirstResponder(side.query) }
-        if section == .git, let root { refreshGit(in: root) }
+        if section == .git { refreshGit() }
     }
     func toggleSidebar() { side.view.isHidden.toggle(); split.adjustSubviews(); if !side.view.isHidden { split.setPosition(260,ofDividerAt:0) } }
     func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat { 170 }
@@ -181,12 +181,12 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
                 self.quick.paths = paths
             }
         }
-        refreshGit(in: root)
-        if side.section == .files { side.reload() }
+        refreshGit()
         if !side.query.stringValue.isEmpty { search(side.query.stringValue) }
         checkDisk()
     }
-    private func refreshGit(in root: URL) {
+    func refreshGit() {
+        guard let root else { return }
         gitJob?.cancel()
         let job = ShellJob(); gitJob = job
         let version = projectVersion
@@ -203,7 +203,7 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
                     self.side.gitMessage = error.localizedDescription.contains("not a git repository") ? "当前文件夹没有 Git 仓库" : error.localizedDescription
                     self.branch.stringValue = root.lastPathComponent
                 }
-                if self.side.section == .git { self.side.reload() }
+                if self.side.section != .search { self.side.reload() }
             }
         }
         if let doc = current, let change = doc.change, change.revision == nil, let repo = side.git?.repo {
@@ -258,7 +258,9 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     }
     private func openNode(_ node: SideNode, pin: Bool) {
         switch node.role {
-        case let .file(url): open(.file(url),pin:pin)
+        case let .file(url, deletion):
+            if let deletion, let git = side.git { open(.patch(git.repo,deletion),pin:pin) }
+            else { open(.file(url),pin:pin) }
         case let .hit(hit):
             if let root { open(.file(root.appendingPathComponent(hit.path)),line:hit.line,column:hit.column,length:hit.length,pin:pin) }
         case let .change(c):

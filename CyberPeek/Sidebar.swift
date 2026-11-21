@@ -4,7 +4,7 @@ enum Section: String { case files = "资源管理器", search = "搜索", git = 
 
 final class SideNode {
     enum Role {
-        case directory(URL), file(URL), group, hit(SearchHit), change(Change), commit(Commit), message
+        case directory(URL), file(URL, deletion: Change? = nil), group, hit(SearchHit), change(Change), commit(Commit), message
     }
     let name: String, key: String
     let role: Role
@@ -15,20 +15,32 @@ final class SideNode {
     var expandable: Bool {
         switch role { case .directory,.group,.commit: return true; default: return false }
     }
-    func items() -> [SideNode] {
+    func items(in tree: GitFileTree?) -> [SideNode] {
         if let children { return children }
         guard case let .directory(url) = role else { return [] }
         let keys: Set<URLResourceKey> = [.isDirectoryKey,.isSymbolicLinkKey]
         let urls = (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: Array(keys))) ?? []
-        let nodes: [(Bool,SideNode)] = urls.compactMap { child in
-            let name = child.lastPathComponent
-            guard ![".git",".DS_Store",".vendor",".build","DerivedData"].contains(name) else { return nil }
+        let hidden: Set<String> = [".git",".DS_Store",".vendor",".build","DerivedData"]
+        var nodes: [SideNode] = urls.compactMap { child in
+            guard !hidden.contains(child.lastPathComponent) else { return nil }
             let values = try? child.resourceValues(forKeys: keys)
             let folder = values?.isDirectory == true && values?.isSymbolicLink != true
-            return (folder, SideNode(name,child.path,folder ? .directory(child) : .file(child)))
+            return SideNode(child.lastPathComponent,child.path,folder ? .directory(child) : .file(child))
         }
-        children = nodes.sorted { $0.0 == $1.0 ? $0.1.name.localizedStandardCompare($1.1.name) == .orderedAscending : $0.0 }.map(\.1)
-        return children ?? []
+        if let tree, let deleted = tree.deletedChildren[url.path] {
+            let missing = deleted.subtracting(nodes.map(\.name)).subtracting(hidden)
+            for name in missing {
+                let child = url.appendingPathComponent(name, isDirectory: false)
+                if let deletion = tree.changes[child.path]?.last(where: { $0.flag == "D" }) {
+                    nodes.append(SideNode(name,child.path,.file(child, deletion: deletion)))
+                } else {
+                    nodes.append(SideNode(name,child.path,.directory(child)))
+                }
+            }
+        }
+        nodes.sort { $0.expandable == $1.expandable ? $0.name.localizedStandardCompare($1.name) == .orderedAscending : $0.expandable }
+        children = nodes
+        return nodes
     }
 }
 
@@ -41,7 +53,7 @@ private final class FileOutline: NSOutlineView {
         guard row >= 0, let node = item(atRow: row) as? SideNode else { return nil }
         let url: URL
         switch node.role {
-        case let .file(file), let .directory(file): url = file
+        case let .file(file, _), let .directory(file): url = file
         default: return nil
         }
         let menu = NSMenu()
@@ -98,6 +110,8 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
         searchBox.place(query, inset: 7)
         outline.activateSelection = { [weak self] in self?.activate(pin:true, keyboard:true) }
         configureTable(outline); outline.outlineTableColumn = outline.tableColumns.first
+        outline.autoresizesOutlineColumn = false
+        outline.autoresizingMask = [.width]
         outline.indentationPerLevel = 11; outline.indentationMarkerFollowsCell = false
         outline.dataSource = self; outline.delegate = self
         outline.target = self; outline.action = #selector(click); outline.doubleAction = #selector(doubleClick)
@@ -165,7 +179,7 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
                 let initiallyOpen = depth == 0 && (section != .git || node.key != "history")
                 let open = states[section]?.contains(node.key) ?? initiallyOpen
                 if open || (section == .search && depth == 0 && groupsNew.contains(node.key)) {
-                    outline.expandItem(node); expand(node.items(),depth:depth+1)
+                    outline.expandItem(node); expand(node.items(in: git?.fileTree),depth:depth+1)
                 }
             }
         }
@@ -182,7 +196,7 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
         var node = top
         for component in url.path.dropFirst(top.key.count+1).split(separator:"/") {
             outline.expandItem(node)
-            guard let child = node.items().first(where:{ $0.name == component }) else { return }
+            guard let child = node.items(in: git?.fileTree).first(where:{ $0.name == component }) else { return }
             node = child
         }
         let row = outline.row(forItem:node)
@@ -200,8 +214,8 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
         if section == .git { reload() }
     }
     func controlTextDidChange(_ obj: Notification) { onQuery?(query.stringValue) }
-    func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int { (item as? SideNode)?.items().count ?? roots.count }
-    func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any { ((item as? SideNode)?.items() ?? roots)[index] }
+    func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int { (item as? SideNode)?.items(in: git?.fileTree).count ?? roots.count }
+    func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any { ((item as? SideNode)?.items(in: git?.fileTree) ?? roots)[index] }
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool { (item as? SideNode)?.expandable == true }
     func outlineViewItemDidExpand(_ notification: Notification) {
         if let node = notification.userInfo?["NSObject"] as? SideNode, case let .commit(commit) = node.role, node.children == nil { onCommit?(node,commit) }
@@ -209,8 +223,26 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
         guard let node = item as? SideNode else { return nil }
         switch node.role {
-        case .directory: return rowView(node.name,icon:"folder",color:Palette.muted)
-        case .file: let icon = kindIcon(node.name); return rowView(node.name,icon:icon.0,color:icon.1)
+        case .directory, .file:
+            let icon = node.expandable ? ("folder", Palette.muted) : kindIcon(node.name)
+            let changes = git?.fileTree.changes[node.key] ?? []
+            if let change = changes.last {
+                let flags = changes.map(\.flag).joined()
+                let color: NSColor
+                switch change.flag {
+                case "A": color = Palette.green
+                case "U": color = change.area == .untracked ? Palette.green : Palette.red
+                case "D": color = Palette.red
+                default: color = Palette.blue
+                }
+                let row = rowView(node.name, icon: icon.0, color: icon.1, detail: flags, detailColor: color)
+                row.toolTip = ([node.name] + changes.map { "\($0.area.rawValue) \($0.flag)" }).joined(separator: " · ")
+                return row
+            }
+            let changed = git?.fileTree.changedDirectories.contains(node.key) == true
+            let row = rowView(node.name, icon: icon.0, color: icon.1, detail: changed ? "•" : nil, detailColor: Palette.blue)
+            if changed { row.toolTip = "\(node.name) · 包含 Git 变更" }
+            return row
         case .group: return rowView(node.name,heading:true)
         case .message: return rowView(node.name,color:Palette.muted)
         case .hit: return rowView(node.name)

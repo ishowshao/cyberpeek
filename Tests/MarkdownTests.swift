@@ -72,6 +72,10 @@ final class MarkdownTests: XCTestCase {
         >     return 42
         > ~~~
 
+        ```json
+        {"name": "CyberPeek"}
+        ```
+
         ```made-up
         *literal*
         ```
@@ -95,6 +99,8 @@ final class MarkdownTests: XCTestCase {
             XCTAssertEqual(color("def"), 4)
             XCTAssertEqual(color("return"), 4)
             XCTAssertEqual(color("42"), 3)
+            XCTAssertEqual(color("name"), 7)
+            XCTAssertEqual(color("CyberPeek"), 2)
             XCTAssertEqual(color("*literal*"), 2)
             done.fulfill()
         }

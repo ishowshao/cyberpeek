@@ -2,8 +2,8 @@ import XCTest
 @testable import CyberPeek
 
 final class DocumentTests: XCTestCase {
-    @MainActor private func showText(_ source: String) throws -> (Editor, NSWindow) {
-        let file = try makeTestWorkspace().appendingPathComponent("sample.txt")
+    @MainActor private func showText(_ source: String, filename: String = "sample.txt") throws -> (Editor, NSWindow) {
+        let file = try makeTestWorkspace().appendingPathComponent(filename)
         let disk = try DiskText(Data(source.utf8))
         let editor = Editor(url: file, identity: file.path, title: file.lastPathComponent, source: source, disk: disk)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 400),
@@ -14,6 +14,29 @@ final class DocumentTests: XCTestCase {
         editor.view.layoutSubtreeIfNeeded()
         window.displayIfNeeded()
         return (editor, window)
+    }
+
+    @MainActor func testJSONColorsObjectKeysAndValues() throws {
+        let source = #"{"name":"name","items":[{"转义\"🔑":"x:y"},"array",42,true,null]}"#
+        let (editor, window) = try showText(source, filename: "sample.json")
+        defer { window.orderOut(nil) }
+        let storage = try XCTUnwrap(editor.text.textStorage)
+        let value = Palette.syntax[2], literal = Palette.syntax[3]
+        let painted = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let offset = (source as NSString).range(of: "array").location
+            return storage.attribute(.foregroundColor, at: offset, effectiveRange: nil) as? NSColor == value
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [painted], timeout: 3), .completed)
+
+        var strings: [String] = [], colors: [NSColor] = []
+        storage.enumerateAttribute(.foregroundColor, in: NSRange(location: 0, length: storage.length)) { color, range, _ in
+            guard let color = color as? NSColor, color != Palette.text else { return }
+            strings.append((source as NSString).substring(with: range))
+            colors.append(color)
+        }
+        XCTAssertEqual(strings, [#""name""#, #""name""#, #""items""#, #""转义\"🔑""#,
+                                 #""x:y""#, #""array""#, "42", "true", "null"])
+        XCTAssertEqual(colors, [Palette.blue, value, Palette.blue, Palette.blue, value, value, literal, literal, literal])
     }
 
     @MainActor func testScrollingKeepsOverlayStyleWhenAppKitRequestsLegacyScrollers() throws {

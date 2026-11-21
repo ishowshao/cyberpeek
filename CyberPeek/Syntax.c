@@ -86,10 +86,12 @@ static void append_token(void *context, uint32_t start, uint32_t end, uint8_t co
 }
 
 void vs_walk_code(TSNode root, VSEmit emit, void *context) {
+    const TSLanguage *lang = ts_node_language(root);
+    TSFieldId json_key = lang == tree_sitter_json() ? ts_language_field_id_for_name(lang, "key", 3) : 0;
     TSTreeCursor cursor = ts_tree_cursor_new(root);
     for (;;) {
         TSNode node = ts_tree_cursor_current_node(&cursor);
-        int color = token_color(node);
+        int color = json_key && ts_tree_cursor_current_field_id(&cursor) == json_key ? 7 : token_color(node);
         if (color) {
             emit(context, ts_node_start_byte(node)/2, ts_node_end_byte(node)/2, color, 0);
         } else if (ts_tree_cursor_goto_first_child(&cursor)) continue;

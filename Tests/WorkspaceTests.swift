@@ -352,7 +352,8 @@ final class WorkspaceTests: XCTestCase {
     @MainActor func testHostUsesProjectFixtureAndInvalidPathsCannotChangeWorkspace() throws {
         let expected = URL(fileURLWithPath: #filePath).deletingLastPathComponent().standardizedFileURL
         let host = try XCTUnwrap(NSApp.delegate as? AppDelegate)
-        XCTAssertEqual(host.workbench.root?.path, expected.path)
+        let initial = try XCTUnwrap(host.activeWorkbench)
+        XCTAssertEqual(initial.root?.path, expected.path)
         let folder = try makeTestWorkspace()
         let missing = folder.appendingPathComponent("missing")
         let file = folder.appendingPathComponent("YES")
@@ -362,9 +363,102 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(AppDelegate.fileArguments(flags[...]), [])
         XCTAssertEqual(AppDelegate.fileArguments((flags + ["--", file.path])[...]).map(\.path), [file.path])
         host.application(NSApp, open: [missing])
-        XCTAssertEqual(host.workbench.root?.path, expected.path)
-        host.workbench.openFolder(file)
-        XCTAssertEqual(host.workbench.root?.path, expected.path)
+        XCTAssertTrue(host.activeWorkbench === initial)
+        initial.openFolder(file)
+        XCTAssertEqual(initial.root?.path, expected.path)
+    }
+
+    @MainActor func testWorkspacesOwnSeparateWindowsAndReopeningRestoresExistingEditor() throws {
+        let host = try XCTUnwrap(NSApp.delegate as? AppDelegate)
+        let original = try XCTUnwrap(host.activeWorkbench)
+        let initialCount = host.workbenches.count
+        let temp = try makeTestWorkspace()
+        let first = temp.appendingPathComponent("Client", isDirectory: true)
+        let second = temp.appendingPathComponent("Service", isDirectory: true)
+        let alias = temp.appendingPathComponent("Client link")
+        for dir in [first, second] { try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true) }
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: first)
+        let a = first.appendingPathComponent("main.txt"), b = second.appendingPathComponent("main.txt")
+        try "client".write(to: a, atomically: true, encoding: .utf8)
+        try "service".write(to: b, atomically: true, encoding: .utf8)
+        func waitFor(_ predicate: @escaping () -> Bool, line: UInt = #line) {
+            let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in predicate() }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed, line: line)
+        }
+        defer {
+            for bench in host.workbenches where bench !== original { bench.window.close() }
+            original.window.makeKeyAndOrderFront(nil)
+        }
+
+        host.newWindow()
+        let client = try XCTUnwrap(host.activeWorkbench)
+        XCTAssertNil(client.root)
+        client.onOpenFolder?(first)
+        host.application(NSApp, open: [a])
+        waitFor { client.current?.url == a }
+        let draft = try XCTUnwrap(client.current)
+        draft.text.insertText("!", replacementRange: NSRange(location: 6, length: 0))
+        draft.text.setSelectedRange(NSRange(location: 1, length: 2))
+        let monitor = try XCTUnwrap(client.monitor)
+        client.onOpenFolder?(second)
+        let service = try XCTUnwrap(host.activeWorkbench)
+        XCTAssertFalse(client === service)
+        host.application(NSApp, open: [b])
+        waitFor { service.current?.url == b }
+        let other = try XCTUnwrap(service.current)
+        other.text.insertText("?", replacementRange: NSRange(location: 7, length: 0))
+        host.save()
+        XCTAssertEqual(try String(contentsOf: b, encoding: .utf8), "service?")
+        XCTAssertEqual(try String(contentsOf: a, encoding: .utf8), "client")
+        XCTAssertTrue(draft.dirty)
+
+        client.window.miniaturize(nil)
+        waitFor { client.window.isMiniaturized }
+        service.onOpenFolder?(alias)
+        waitFor { !client.window.isMiniaturized && client.window.isVisible && host.activeWorkbench === client }
+        host.application(NSApp, open: [first, alias])
+        XCTAssertEqual(host.workbenches.count, initialCount + 2)
+        XCTAssertTrue(host.activeWorkbench === client && client.current === draft && client.monitor === monitor)
+        XCTAssertEqual(draft.text.selectedRange(), NSRange(location: 1, length: 2))
+        XCTAssertEqual(draft.text.string, "client!")
+        XCTAssertTrue(draft.dirty)
+
+        // A clean foreground window must not let Quit bypass a background window's dirty tab.
+        host.application(NSApp, open: [second])
+        RunLoop.main.perform(inModes: [.modalPanel]) { NSApp.stopModal(withCode: .alertSecondButtonReturn) }
+        XCTAssertEqual(host.applicationShouldTerminate(NSApp), .terminateCancel)
+        XCTAssertTrue(host.activeWorkbench === client)
+        RunLoop.main.perform(inModes: [.modalPanel]) { NSApp.stopModal(withCode: .alertSecondButtonReturn) }
+        host.closeWindow()
+        XCTAssertTrue(host.workbenches.contains { $0 === client })
+        host.application(NSApp, open: [second])
+        host.closeWindow()
+        XCTAssertNil(service.monitor)
+        XCTAssertEqual(host.workbenches.count, initialCount + 1)
+        XCTAssertTrue(client.current === draft && draft.dirty)
+    }
+
+    @MainActor func testFinderBatchRoutesEveryFileToTheMostSpecificWindow() throws {
+        let host = try XCTUnwrap(NSApp.delegate as? AppDelegate)
+        let original = try XCTUnwrap(host.activeWorkbench)
+        let parent = try makeTestWorkspace(), child = parent.appendingPathComponent("nested", isDirectory: true)
+        try FileManager.default.createDirectory(at: child, withIntermediateDirectories: true)
+        let files = ["a.txt", "b.txt", "nested/c.txt", "nested/d.txt"].map { parent.appendingPathComponent($0) }
+        for file in files { try Data().write(to: file) }
+        defer {
+            for bench in host.workbenches where bench !== original { bench.window.close() }
+            original.window.makeKeyAndOrderFront(nil)
+        }
+        host.application(NSApp, open: [files[0], child, parent, files[1], files[2], files[3]])
+        let outer = try XCTUnwrap(host.workbenches.first { $0.root?.path == parent.path })
+        let inner = try XCTUnwrap(host.workbenches.first { $0.root?.path == child.path })
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            outer.documents.count == 2 && inner.documents.count == 2
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed)
+        XCTAssertEqual(outer.documents.map(\.url), Array(files.prefix(2)))
+        XCTAssertEqual(inner.documents.map(\.url), Array(files.suffix(2)))
+        XCTAssertTrue((outer.documents + inner.documents).allSatisfy(\.pinned))
     }
 
     @MainActor func testOpeningSubfolderScopesIndexSearchAndGit() throws {

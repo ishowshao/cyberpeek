@@ -1,25 +1,43 @@
 import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    var workbench: Workbench!
+    private(set) var workbenches: [Workbench] = []
+    var activeWorkbench: Workbench? {
+        var window = NSApp.keyWindow
+        while let candidate = window {
+            if let owner = workbenches.first(where: { $0.window === candidate }) { return owner }
+            window = candidate.sheetParent ?? candidate.parent
+        }
+        if let main = workbenches.first(where: { $0.window === NSApp.mainWindow }) { return main }
+        // An open event can arrive before the app has a key or main window.
+        for window in NSApp.orderedWindows {
+            if let owner = workbenches.first(where: { $0.window === window }) { return owner }
+        }
+        return workbenches.last
+    }
     private var pending = [URL]()
+    private var launched = false
+    private var rememberFolders = true
     func applicationDidFinishLaunching(_ notification: Notification) {
         let app = NSApplication.shared
         installMenu()
-        workbench = Workbench()
-        workbench.window.makeKeyAndOrderFront(nil)
+        launched = true
+        let initial = makeWorkbench()
+        initial.window.makeKeyAndOrderFront(nil)
         app.activate(ignoringOtherApps:true)
         let environment = ProcessInfo.processInfo.environment
         if let fixture = environment["CYBERPEEK_TEST_WORKSPACE"] {
-            workbench.openFolder(URL(fileURLWithPath: fixture), remember: false)
+            rememberFolders = false
+            initial.openFolder(URL(fileURLWithPath: fixture), remember: false)
             return
         }
         // A test runner without the scheme's fixture starts with an empty window.
         if environment["XCTestConfigurationFilePath"] != nil || environment["XCTestBundlePath"] != nil { return }
         let urls = pending.isEmpty ? Self.fileArguments(CommandLine.arguments.dropFirst()) : pending
+        pending.removeAll()
         if !urls.isEmpty { open(urls) }
         else if let last = UserDefaults.standard.string(forKey:"lastFolder"), last != "/" {
-            workbench.openFolder(URL(fileURLWithPath:last), remember: false)
+            initial.openFolder(URL(fileURLWithPath:last), remember: false)
         }
     }
     static func fileArguments(_ arguments: ArraySlice<String>) -> [URL] {
@@ -37,51 +55,87 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return urls
     }
     func application(_ application: NSApplication, open urls: [URL]) {
-        if workbench == nil { pending.append(contentsOf:urls) } else { open(urls) }
+        if launched { open(urls) } else { pending.append(contentsOf: urls) }
     }
-    private func open(_ urls: [URL]) {
-        guard let first = urls.first?.resolvingSymlinksInPath().standardizedFileURL, first.isFileURL,
-              let type = try? first.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey]) else { return }
-        if type.isDirectory == true {
-            workbench.openFolder(first)
-            if let file = urls.dropFirst().first?.resolvingSymlinksInPath().standardizedFileURL,
-               workbench.root?.path == first.path, file.pathComponents.starts(with: first.pathComponents),
-               (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
-                workbench.open(.file(file),pin:true)
-            }
-        } else if type.isRegularFile == true {
-            let parent = first.deletingLastPathComponent()
-            if workbench.root.map({ first.pathComponents.starts(with: $0.pathComponents) }) != true { workbench.openFolder(parent) }
-            if let root = workbench.root, first.pathComponents.starts(with: root.pathComponents) { workbench.open(.file(first),pin:true) }
+    private func makeWorkbench() -> Workbench {
+        let bench = Workbench()
+        if let frame = activeWorkbench?.window.frame {
+            bench.window.cascadeTopLeft(from: NSPoint(x: frame.minX + 22, y: frame.maxY - 22))
+        }
+        bench.onOpenFolder = { [weak self, weak bench] url in self?.open([url], from: bench) }
+        bench.onClose = { [weak self] owner in self?.workbenches.removeAll { $0 === owner } }
+        workbenches.append(bench)
+        return bench
+    }
+    private func focus(_ bench: Workbench) {
+        if bench.window.isMiniaturized { bench.window.deminiaturize(nil) }
+        bench.window.makeKeyAndOrderFront(nil)
+        if !NSApp.isActive { NSApp.activate() }
+    }
+    private func workspace(for folder: URL, from source: Workbench?) -> Workbench {
+        if let existing = workbenches.first(where: { $0.root?.path == folder.path }) { return existing }
+        let bench: Workbench
+        if let source, source.root == nil { bench = source }
+        else { bench = workbenches.last(where: { $0.root == nil }) ?? makeWorkbench() }
+        bench.openFolder(folder, remember: rememberFolders)
+        return bench
+    }
+    private func open(_ urls: [URL], from source: Workbench? = nil) {
+        let source = source ?? activeWorkbench
+        var files = [URL]()
+        // Establish explicitly requested workspaces before assigning files from the same Finder event.
+        for url in urls where url.isFileURL {
+            let url = url.resolvingSymlinksInPath().standardizedFileURL
+            guard let type = try? url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey]) else { continue }
+            if type.isDirectory == true { focus(workspace(for: url, from: source)) }
+            else if type.isRegularFile == true { files.append(url) }
+        }
+        for file in files {
+            let path = file.pathComponents
+            let owners = workbenches.filter { $0.root.map { path.starts(with: $0.pathComponents) } == true }
+            let bench = owners.max { ($0.root?.pathComponents.count ?? 0) < ($1.root?.pathComponents.count ?? 0) }
+                ?? workspace(for: file.deletingLastPathComponent(), from: source)
+            focus(bench)
+            bench.enqueueFile(file)
         }
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func applicationDidBecomeActive(_ notification: Notification) {
         // An external Git command may update an index outside the monitored workspace folder.
-        if workbench?.side.git?.repositories.isEmpty == false { workbench.refreshGit() }
+        if let bench = activeWorkbench, bench.side.git?.repositories.isEmpty == false { bench.refreshGit() }
     }
-    func applicationWillTerminate(_ notification: Notification) { workbench?.cancelWorkspaceJobs() }
+    func applicationWillTerminate(_ notification: Notification) { workbenches.forEach { $0.cancelWorkspaceJobs() } }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        if let w = workbench, w.window.isVisible, !w.documents.allSatisfy({ w.confirmClosing($0) }) { return .terminateCancel }
+        for bench in workbenches where bench.documents.contains(where: \.dirty) {
+            focus(bench)
+            if !bench.documents.allSatisfy({ bench.confirmClosing($0) }) { return .terminateCancel }
+        }
         return .terminateNow
     }
-    @objc func folder() { workbench.chooseFolder() }
+    @objc func newWindow() { focus(makeWorkbench()) }
+    @objc func closeWindow() { activeWorkbench?.window.performClose(nil) }
+    @objc func folder() { activeWorkbench?.chooseFolder() }
     @objc func file() {
+        guard let bench = activeWorkbench else { return }
         let panel = NSOpenPanel()
-        panel.beginSheetModal(for:workbench.window) { result in if result == .OK, let url = panel.url { self.open([url]) } }
+        panel.allowsMultipleSelection = true
+        panel.beginSheetModal(for:bench.window) { result in if result == .OK { self.open(panel.urls, from: bench) } }
     }
-    @objc func save() { workbench.save() }
-    @objc func copyFile() { workbench.saveCopy() }
-    @objc func closeTab() { if let doc = workbench.activeDocument { workbench.close(doc) } else { workbench.window.performClose(nil) } }
-    @objc func quickOpen() { workbench.quickOpen() }
-    @objc func files() { workbench.selectSection(.files) }
-    @objc func search() { workbench.selectSection(.search) }
-    @objc func git() { workbench.selectSection(.git) }
-    @objc func toggleSidebar() { workbench.toggleSidebar() }
-    @objc func back() { workbench.navigate(backwards:true) }
-    @objc func forward() { workbench.navigate(backwards:false) }
+    @objc func save() { activeWorkbench?.save() }
+    @objc func copyFile() { activeWorkbench?.saveCopy() }
+    @objc func closeTab() {
+        guard let bench = activeWorkbench else { return }
+        if let doc = bench.activeDocument { bench.close(doc) } else { bench.window.performClose(nil) }
+    }
+    @objc func quickOpen() { activeWorkbench?.quickOpen() }
+    @objc func files() { activeWorkbench?.selectSection(.files) }
+    @objc func search() { activeWorkbench?.selectSection(.search) }
+    @objc func git() { activeWorkbench?.selectSection(.git) }
+    @objc func toggleSidebar() { activeWorkbench?.toggleSidebar() }
+    @objc func back() { activeWorkbench?.navigate(backwards:true) }
+    @objc func forward() { activeWorkbench?.navigate(backwards:false) }
     @objc func find(_ sender: NSMenuItem) {
-        guard let editor = workbench.current else { return }
+        guard let workbench = activeWorkbench, let editor = workbench.current else { return }
         if editor.showsSVGPreview { editor.showsSVGPreview = false; workbench.show(editor) }
         let view = editor.text
         workbench.window.makeFirstResponder(view)
@@ -102,9 +156,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item(app,"隐藏 CyberPeek",#selector(NSApplication.hide(_:)),"h")
         item(app,"退出 CyberPeek",#selector(NSApplication.terminate(_:)),"q")
         let fileMenu = menu("文件")
+        item(fileMenu,"新建窗口",#selector(newWindow),"n",.command,self)
         item(fileMenu,"打开文件…",#selector(file),"o",.command,self); item(fileMenu,"打开文件夹…",#selector(folder),"o",[.command,.shift],self)
         item(fileMenu,"快速打开…",#selector(quickOpen),"p",.command,self)
         fileMenu.addItem(.separator()); item(fileMenu,"保存",#selector(save),"s",.command,self); item(fileMenu,"保存副本…",#selector(copyFile),"s",[.command,.shift],self); item(fileMenu,"关闭标签页",#selector(closeTab),"w",.command,self)
+        item(fileMenu,"关闭窗口",#selector(closeWindow),"w",[.command,.shift],self)
         let edit = menu("编辑")
         item(edit,"撤销",Selector(("undo:")),"z"); item(edit,"重做",Selector(("redo:")),"z",[.command,.shift])
         edit.addItem(.separator()); item(edit,"剪切",#selector(NSText.cut(_:)),"x"); item(edit,"复制",#selector(NSText.copy(_:)),"c")

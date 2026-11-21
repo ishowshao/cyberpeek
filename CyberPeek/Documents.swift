@@ -38,7 +38,24 @@ extension Workbench {
         }
         open(next.target,line:next.line,column:next.column,record:false)
     }
-    func open(_ target: Target, line: Int? = nil, column: Int = 0, length: Int = 0, pin: Bool = false, record: Bool = true) {
+    func enqueueFile(_ url: URL) {
+        queuedFiles.append(url)
+        if queuedFiles.count == 1 { openNextFile() }
+    }
+    private func openNextFile() {
+        guard let url = queuedFiles.first else { return }
+        let workspace = projectVersion
+        open(.file(url), pin: true) { [weak self] in
+            guard let self, self.projectVersion == workspace else { return }
+            self.queuedFiles.removeFirst()
+            if self.queuedFiles.isEmpty { self.queuedFiles = []; return }
+            DispatchQueue.main.async {
+                if self.projectVersion == workspace { self.openNextFile() }
+            }
+        }
+    }
+    func open(_ target: Target, line: Int? = nil, column: Int = 0, length: Int = 0, pin: Bool = false, record: Bool = true,
+              completion: (() -> Void)? = nil) {
         let id: String, url: URL, change: Change?, title: String
         switch target {
         case let .file(file):
@@ -60,7 +77,7 @@ extension Workbench {
             if let line { editor?.go(line,column:column,length:length) }
         }
         if let old = documents.first(where:{ $0.identity == id }) {
-            activate(old); refreshSelectedDocument(); return
+            activate(old); refreshSelectedDocument(); completion?(); return
         }
         pendingOpen = target
         statusMessage.stringValue = "正在打开…"
@@ -82,6 +99,7 @@ extension Workbench {
                 }
             }
             DispatchQueue.main.async {
+                defer { completion?() }
                 guard self.loadVersion == version else { return }
                 self.pendingOpen = nil
                 self.statusMessage.stringValue = ""

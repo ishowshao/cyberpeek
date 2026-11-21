@@ -24,6 +24,8 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     var projectButton: ActionButton!
     var activity: [Section:(ActionButton,NSView)] = [:]
     var root: URL?, documents = [DocumentTab](), activeDocument: DocumentTab?
+    var onOpenFolder: ((URL) -> Void)?
+    var onClose: ((Workbench) -> Void)?
     var current: Editor? { activeDocument as? Editor }
     var monitor: WorkspaceMonitor?, eventTask: DispatchWorkItem?
     private var gitJob: ShellJob?
@@ -46,6 +48,7 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     private let lineDiffQueue = DispatchQueue(label: "CyberPeek.gitLineDiff", qos: .utility)
     var queryJob: ShellJob?, indexJob: ShellJob?, queryVersion = 0, projectVersion = 0
     var pendingOpen: Target?
+    var queuedFiles: ArraySlice<URL> = []
     var loadVersion = 0 { didSet { pendingOpen = nil } }
     var gitVersion = 0, diskVersion = 0
     private var toolbarDelegate: ToolbarItems!
@@ -61,6 +64,7 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         self.moveToTrash = moveToTrash
         super.init()
         window.delegate = self; window.minSize = NSSize(width:740,height:420)
+        window.tabbingMode = .disallowed
         window.title = "CyberPeek"; window.titleVisibility = .hidden; window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named:.darkAqua)
         window.backgroundColor = Palette.canvas; window.toolbarStyle = .unifiedCompact
@@ -187,7 +191,9 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     func chooseFolder() {
         let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.prompt = "打开"
         panel.beginSheetModal(for:window) { [weak self] result in
-            if result == .OK, let url = panel.url { self?.openFolder(url) }
+            guard result == .OK, let self, let url = panel.url else { return }
+            if let onOpenFolder = self.onOpenFolder { onOpenFolder(url) }
+            else { self.openFolder(url) }
         }
     }
     func quickOpen() {
@@ -196,6 +202,9 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         indexIfNeeded()
     }
     func cancelWorkspaceJobs() {
+        projectVersion += 1; loadVersion += 1; queryVersion += 1; diskVersion += 1; gitVersion += 1
+        queuedFiles = []
+        monitor = nil
         queryJob?.cancel(); indexJob?.cancel(); gitJob?.cancel(); eventTask?.cancel(); lineJob?.cancel()
         gitJob = nil
         indexJob = nil
@@ -213,7 +222,6 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         guard folder.isFileURL, (try? folder.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { return }
         guard documents.allSatisfy({ confirmClosing($0) }) else { return }
         cancelWorkspaceJobs()
-        projectVersion += 1; loadVersion += 1; queryVersion += 1
         if quick.isVisible { quick.dismiss() }
         root = folder; quick.folder = folder; documents = []; targets = [:]; back = []; forward = []; quick.paths = []
         side.reset(folder); selectSection(.files); show(nil)
@@ -447,6 +455,15 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         }
     }
     func windowShouldClose(_ sender: NSWindow) -> Bool { documents.allSatisfy { confirmClosing($0) } }
+    func windowDidBecomeMain(_ notification: Notification) {
+        if side.git?.repositories.isEmpty == false { refreshGit() }
+    }
+    func windowWillClose(_ notification: Notification) {
+        if quick.isVisible { quick.dismiss() }
+        cancelWorkspaceJobs()
+        root = nil
+        onClose?(self)
+    }
 }
 
 private final class ToolbarItems: NSObject, NSToolbarDelegate {

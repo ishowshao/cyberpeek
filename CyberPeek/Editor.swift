@@ -72,11 +72,24 @@ final class SourceTextView: NSTextView {
     }
 }
 
-private final class Gutter: NSView {
+private final class EditorLineBackground: NSView, NSViewToolTipOwner {
+    private struct Deletion: Equatable {
+        let y: CGFloat
+        let count: Int
+    }
+    private var visibleDeletions = [Deletion]()
+    private var toolTipCounts = [NSView.ToolTipTag: Int]()
     weak var owner: Editor?
     override var isFlipped: Bool { true }
     override func draw(_ dirtyRect: NSRect) {
-        guard let owner, let manager = owner.text.textLayoutManager, let content = manager.textContentManager,
+        guard let owner else { return }
+        let origin = owner.text.textContainerOrigin.y - owner.scroll.contentView.bounds.origin.y
+        var deletions = [Deletion]()
+        defer { drawDeletions(deletions) }
+        if let count = owner.lineChanges.deletedAfter[0], origin >= -4 {
+            deletions.append(Deletion(y: origin, count: count))
+        }
+        guard let manager = owner.text.textLayoutManager, let content = manager.textContentManager,
               let visible = manager.textViewportLayoutController.viewportRange else { return }
         let style = NSMutableParagraphStyle()
         style.alignment = .right
@@ -84,7 +97,8 @@ private final class Gutter: NSView {
         let attrs: [NSAttributedString.Key:Any] = [.font: font,
                                                    .foregroundColor: Palette.muted, .paragraphStyle: style]
         let height = ceil(("0" as NSString).size(withAttributes: attrs).height)
-        let origin = owner.text.textContainerOrigin.y - owner.scroll.contentView.bounds.origin.y
+        let gutterWidth = owner.scroll.frame.minX
+        let scale = window?.backingScaleFactor ?? 1
         manager.enumerateTextLayoutFragments(from: visible.location, options: []) { fragment in
             let location = fragment.rangeInElement.location
             // Unlaid fragments can have a zero frame, even when they are far below the viewport.
@@ -96,9 +110,45 @@ private final class Gutter: NSView {
             let line = owner.lineNumber(at: index)
             let number = "\(line)" as NSString
             let lineHeight = fragment.textLineFragments.first?.typographicBounds.height ?? height
-            number.draw(in: NSRect(x: 0, y: y + (lineHeight - height)/2, width: self.bounds.width-9, height: height), withAttributes: attrs)
+            if let kind = owner.lineChanges.kind(at: line) {
+                let color = kind == .added ? Palette.green : Palette.blue
+                let top = (y * scale).rounded() / scale
+                let bottom = ((y + lineHeight) * scale).rounded() / scale
+                color.withAlphaComponent(0.13).setFill()
+                NSRect(x: 0, y: top, width: self.bounds.width, height: bottom - top).fill()
+                color.setFill()
+                NSRect(x: 0, y: top, width: 3, height: bottom - top).fill()
+            }
+            number.draw(in: NSRect(x: 0, y: y + (lineHeight - height)/2, width: gutterWidth-9, height: height), withAttributes: attrs)
+            if let count = owner.lineChanges.deletedAfter[line] {
+                deletions.append(Deletion(y: y + lineHeight, count: count))
+            }
             return true
         }
+    }
+
+    private func drawDeletions(_ deletions: [Deletion]) {
+        for deletion in deletions {
+            let wedge = NSBezierPath()
+            wedge.move(to: NSPoint(x: 0, y: deletion.y - 4))
+            wedge.line(to: NSPoint(x: 9, y: deletion.y))
+            wedge.line(to: NSPoint(x: 0, y: deletion.y + 4))
+            wedge.close()
+            Palette.red.setFill()
+            wedge.fill()
+        }
+        guard visibleDeletions != deletions else { return }
+        visibleDeletions = deletions
+        removeAllToolTips()
+        toolTipCounts.removeAll(keepingCapacity: true)
+        for deletion in deletions {
+            let hit = NSRect(x: 0, y: deletion.y - 6, width: 14, height: 12)
+            toolTipCounts[addToolTip(hit, owner: self, userData: nil)] = deletion.count
+        }
+    }
+
+    func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint, userData data: UnsafeMutableRawPointer?) -> String {
+        toolTipCounts[tag].map { "此处删除了 \($0) 行" } ?? ""
     }
 }
 
@@ -106,8 +156,13 @@ final class Editor: NSObject, NSTextViewDelegate {
     let view = NSView()
     let text = SourceTextView(usingTextLayoutManager: true)
     let scroll = OverlayScrollView()
-    private let gutter = Gutter()
-    private lazy var gutterWidth = gutter.widthAnchor.constraint(equalToConstant: 54)
+    private let lineBackground = EditorLineBackground()
+    private lazy var gutterWidth = scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 54)
+    private(set) var lineChanges = GitLineChanges()
+    private var lastChangeJump: (index: Int, scrollY: CGFloat)?
+    var contentLineCount: Int {
+        lineStarts.count - (lineStarts.last == text.textStorage?.length ? 1 : 0)
+    }
     fileprivate let fontSettings: EditorFontSettings
     let url: URL
     let change: Change?
@@ -117,7 +172,7 @@ final class Editor: NSObject, NSTextViewDelegate {
     var pinned = false
     private(set) var dirty = false
     var conflict = false
-    var onChange: (() -> Void)?
+    var onChange: ((_ contentChanged: Bool) -> Void)?
     var onCursor: (() -> Void)?
     var onDiffLine: ((Int) -> Void)?
     private var lineStarts = [0]
@@ -125,7 +180,7 @@ final class Editor: NSObject, NSTextViewDelegate {
     private var tokens: [VSToken] = []
     private var paintedRange: NSRange?
     private var paintQueued = false
-    private var revision = 0
+    private(set) var revision = 0
     private var pendingHighlight: DispatchWorkItem?
     private var replacing = false
     let isPatch: Bool
@@ -136,14 +191,14 @@ final class Editor: NSObject, NSTextViewDelegate {
         self.url = url; self.identity = identity; self.title = title; base = disk; self.change = change; isPatch = patch
         worker = SyntaxWorker(ext: patch ? "" : url.pathExtension.lowercased())
         super.init()
-        view.fill(Palette.canvas); gutter.owner = self
+        view.fill(Palette.canvas); lineBackground.owner = self
         text.isRichText = false; text.allowsUndo = disk != nil; text.isEditable = disk != nil
         text.isAutomaticQuoteSubstitutionEnabled = false; text.isAutomaticDashSubstitutionEnabled = false
         text.isAutomaticTextReplacementEnabled = false; text.isAutomaticSpellingCorrectionEnabled = false
         text.isContinuousSpellCheckingEnabled = false; text.isGrammarCheckingEnabled = false
         text.isAutomaticLinkDetectionEnabled = false; text.smartInsertDeleteEnabled = false
         text.usesFindBar = true; text.isIncrementalSearchingEnabled = true
-        text.drawsBackground = true; text.backgroundColor = Palette.canvas; text.textColor = Palette.text
+        text.backgroundColor = Palette.canvas; text.drawsBackground = false; text.textColor = Palette.text
         text.font = fontSettings.fonts.regular; text.insertionPointColor = Palette.text
         text.textContainerInset = NSSize(width: 4, height: 12)
         text.isHorizontallyResizable = true; text.isVerticallyResizable = true
@@ -152,12 +207,10 @@ final class Editor: NSObject, NSTextViewDelegate {
         text.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         text.textContainer?.widthTracksTextView = false
         scroll.documentView = text; scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = true
-        scroll.backgroundColor = Palette.canvas
-        gutter.translatesAutoresizingMaskIntoConstraints = false; scroll.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(gutter); view.addSubview(scroll)
-        NSLayoutConstraint.activate([gutter.leadingAnchor.constraint(equalTo: view.leadingAnchor), gutterWidth,
-            gutter.topAnchor.constraint(equalTo: view.topAnchor), gutter.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            scroll.leadingAnchor.constraint(equalTo: gutter.trailingAnchor), scroll.topAnchor.constraint(equalTo: view.topAnchor),
+        scroll.drawsBackground = false
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        view.place(lineBackground); view.addSubview(scroll)
+        NSLayoutConstraint.activate([gutterWidth, scroll.topAnchor.constraint(equalTo: view.topAnchor),
             scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor), scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor)])
         scroll.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(redraw), name: NSView.boundsDidChangeNotification, object: scroll.contentView)
@@ -193,10 +246,89 @@ final class Editor: NSObject, NSTextViewDelegate {
         replacing = false
         indexLines()
         scroll.contentView.scroll(to: position); scroll.reflectScrolledClipView(scroll.contentView)
-        highlight(); redraw()
+        highlight(); redraw(); onChange?(true)
+    }
+    func setLineChanges(_ changes: GitLineChanges) {
+        guard changes != lineChanges else { return }
+        lineChanges = changes
+        lastChangeJump = nil
+        lineBackground.needsDisplay = true
+    }
+    func navigateChange(forward: Bool) {
+        let hunks = lineChanges.hunks
+        guard !hunks.isEmpty, let layout = text.textLayoutManager, let content = layout.textContentManager else { return }
+        let clip = scroll.contentView
+        let index = changeIndex(forward: forward, layout: layout, content: content)
+        let lines = hunks[index].lines
+        // The deletion marker sits on the bottom edge of the preceding surviving row.
+        let firstLine = lines.isEmpty ? max(1, lines.lowerBound - 1) : lines.lowerBound
+        let firstOffset = lineStarts[min(firstLine, lineStarts.count) - 1]
+        let lastLine = max(firstLine, lines.upperBound - 1)
+        let lastOffset = lineStarts[min(lastLine, lineStarts.count) - 1]
+        guard let start = content.location(content.documentRange.location, offsetBy: firstOffset) else { return }
+        let previousX = clip.bounds.minX
+        text.scrollRangeToVisible(NSRange(location: firstOffset, length: 0))
+
+        // Moving the viewport can revise TextKit's estimates for distant paragraphs.
+        // Recheck the destination using the geometry of the newly visible rows.
+        for _ in 0..<3 {
+            layout.textViewportLayoutController.layoutViewport()
+            paintVisibleText()
+            text.layoutSubtreeIfNeeded()
+            let extent = changeExtent(lines: lines, start: start, lastOffset: lastOffset, layout: layout, content: content)
+            var bounds = clip.bounds
+            let y = extent.upperBound - extent.lowerBound >= bounds.height
+                ? extent.lowerBound : (extent.lowerBound + extent.upperBound - bounds.height) / 2
+            bounds.origin = NSPoint(x: previousX, y: y)
+            let target = clip.constrainBoundsRect(bounds).origin
+            if abs(clip.bounds.minY - target.y) < 0.5 && clip.bounds.minX == target.x { break }
+            clip.scroll(to: target)
+            scroll.reflectScrolledClipView(clip)
+        }
+        lastChangeJump = (index, clip.bounds.minY)
+        redraw()
+    }
+
+    private func changeIndex(forward: Bool, layout: NSTextLayoutManager, content: NSTextContentManager) -> Int {
+        let hunks = lineChanges.hunks
+        let bounds = scroll.contentView.bounds
+        if let last = lastChangeJump, abs(last.scrollY - bounds.minY) < 1 {
+            return (last.index + (forward ? 1 : -1) + hunks.count) % hunks.count
+        }
+        let caret = text.selectedRange().location
+        let location = content.location(content.documentRange.location, offsetBy: caret)
+        let fragment = location.flatMap { layout.textLayoutFragment(for: $0) }
+        let reference: Int
+        if let fragment, fragment.state == .layoutAvailable,
+           bounds.intersects(fragment.layoutFragmentFrame.offsetBy(dx: text.textContainerOrigin.x, dy: text.textContainerOrigin.y)) {
+            reference = lineNumber(at: caret)
+        } else {
+            reference = lineNumber(at: text.characterIndexForInsertion(at: NSPoint(x: bounds.midX, y: bounds.midY)))
+        }
+        if forward {
+            return hunks.firstIndex { max($0.lines.lowerBound, $0.lines.upperBound - 1) >= reference } ?? 0
+        }
+        return hunks.lastIndex { $0.lines.lowerBound <= reference } ?? hunks.count - 1
+    }
+
+    private func changeExtent(lines: Range<Int>, start: NSTextLocation, lastOffset: Int,
+                              layout: NSTextLayoutManager, content: NSTextContentManager) -> ClosedRange<CGFloat> {
+        let inset = text.textContainerOrigin.y
+        if lines.isEmpty && lines.lowerBound == 1 { return inset...inset }
+        let viewportHeight = scroll.contentView.bounds.height
+        var top: CGFloat?, bottom = inset
+        // Measure at most one screen of fragments, even for a whole-file insertion.
+        layout.enumerateTextLayoutFragments(from: start, options: [.ensuresLayout]) { fragment in
+            let y = inset + fragment.layoutFragmentFrame.minY
+            if top == nil { top = y }
+            bottom = y + (fragment.textLineFragments.first?.typographicBounds.height ?? fragment.layoutFragmentFrame.height)
+            let offset = content.offset(from: content.documentRange.location, to: fragment.rangeInElement.location)
+            return offset < lastOffset && bottom - (top ?? y) < viewportHeight
+        }
+        return (lines.isEmpty ? bottom : min(top ?? bottom, bottom))...bottom
     }
     @objc private func redraw() {
-        gutter.needsDisplay = true
+        lineBackground.needsDisplay = true
         guard !paintQueued else { return }
         paintQueued = true
         DispatchQueue.main.async { [weak self] in
@@ -233,9 +365,12 @@ final class Editor: NSObject, NSTextViewDelegate {
     func textDidChange(_ notification: Notification) {
         guard !replacing else { return }
         dirty = text.string != base?.text; pinned = true
-        indexLines(); highlight(); redraw(); onChange?()
+        indexLines(); highlight(); redraw(); onChange?(true)
     }
-    func textViewDidChangeSelection(_ notification: Notification) { if !replacing { onCursor?() } }
+    func textViewDidChangeSelection(_ notification: Notification) {
+        lastChangeJump = nil
+        if !replacing { onCursor?() }
+    }
 
     private func highlight() {
         revision += 1
@@ -343,6 +478,6 @@ final class Editor: NSObject, NSTextViewDelegate {
         }
         if let error = writeError ?? coordinationError { throw error }
         self.base = try DiskText(output); dirty = false; conflict = false
-        onChange?()
+        onChange?(false)
     }
 }

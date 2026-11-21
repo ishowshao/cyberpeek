@@ -8,12 +8,28 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     let crumb = label("",11,color:Palette.muted), branch = label("",11), position = label("",11), format = label("",11)
     let statusMessage = label("",11,color:Palette.muted)
     let conflictBar = NSView(), crumbBar = NSView()
+    private lazy var previousChange = ActionButton(icon: "arrow.up", tip: "上一个 Git 变更", size: 12) { [weak self] in
+        self?.current?.navigateChange(forward: false)
+    }
+    private lazy var nextChange = ActionButton(icon: "arrow.down", tip: "下一个 Git 变更", size: 12) { [weak self] in
+        self?.current?.navigateChange(forward: true)
+    }
     let pathPasteboard: NSPasteboard
     var projectButton: ActionButton!
     var activity: [Section:(ActionButton,NSView)] = [:]
     var root: URL?, documents = [Editor](), current: Editor?
     var monitor: WorkspaceMonitor?, eventTask: DispatchWorkItem?
     private var gitJob: ShellJob?
+    private struct LineComparison: Equatable {
+        let document: ObjectIdentifier
+        let revision: Int
+        let head: String
+        let path: String
+    }
+    private var lineComparison: LineComparison?
+    private var lineJob: ShellJob?
+    private var lineBaseline: GitLineBaseline?
+    private let lineDiffQueue = DispatchQueue(label: "CyberPeek.gitLineDiff", qos: .utility)
     var queryJob: ShellJob?, indexJob: ShellJob?, queryVersion = 0, projectVersion = 0, loadVersion = 0
     var gitVersion = 0, diskVersion = 0
     private var toolbarDelegate: ToolbarItems!
@@ -97,9 +113,15 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         let breadcrumb = stack([crumb, copyPath], spacing: 3)
         breadcrumb.translatesAutoresizingMaskIntoConstraints = false
         crumbBar.addSubview(breadcrumb)
+        let changeButtons = stack([previousChange, nextChange], spacing: 2)
+        for button in [previousChange, nextChange] { button.width(24); button.height(24) }
+        changeButtons.translatesAutoresizingMaskIntoConstraints = false
+        crumbBar.addSubview(changeButtons)
         NSLayoutConstraint.activate([
             breadcrumb.leadingAnchor.constraint(equalTo: crumbBar.leadingAnchor, constant: 6),
-            breadcrumb.trailingAnchor.constraint(lessThanOrEqualTo: crumbBar.trailingAnchor, constant: -6),
+            breadcrumb.trailingAnchor.constraint(lessThanOrEqualTo: changeButtons.leadingAnchor, constant: -6),
+            changeButtons.trailingAnchor.constraint(equalTo: crumbBar.trailingAnchor, constant: -6),
+            changeButtons.centerYAnchor.constraint(equalTo: crumbBar.centerYAnchor),
             breadcrumb.centerYAnchor.constraint(equalTo: crumbBar.centerYAnchor)
         ])
         crumbBar.height(28); crumbBar.fill(Palette.canvas)
@@ -149,7 +171,10 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     }
     func quickOpen() { if root == nil { chooseFolder() } else { quick.show(in:window) } }
     func cancelWorkspaceJobs() {
-        queryJob?.cancel(); indexJob?.cancel(); gitJob?.cancel(); eventTask?.cancel()
+        queryJob?.cancel(); indexJob?.cancel(); gitJob?.cancel(); eventTask?.cancel(); lineJob?.cancel()
+        lineJob = nil
+        lineComparison = nil
+        lineBaseline = nil
     }
     func openFolder(_ url: URL, remember: Bool = true) {
         let folder = url.resolvingSymlinksInPath().standardizedFileURL
@@ -204,6 +229,7 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
                     self.branch.stringValue = root.lastPathComponent
                 }
                 if self.side.section != .search { self.side.reload() }
+                self.refreshLineChanges()
             }
         }
         if let doc = current, let change = doc.change, change.revision == nil, let repo = side.git?.repo {
@@ -211,6 +237,61 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
                 let patch = try? GitState(repo:repo).diff(change)
                 DispatchQueue.main.async {
                     if self.gitVersion == pass, self.current === doc, let patch, doc.text.string != patch { doc.replace(patch) }
+                }
+            }
+        }
+    }
+    func refreshLineChanges() {
+        defer { updateChangeButtons() }
+        var immediate = GitLineChanges()
+        if let doc = current, doc.base != nil, let git = side.git, let root,
+           doc.url.pathComponents.starts(with: root.pathComponents) {
+            let changes = git.fileTree.changes[doc.url.path] ?? []
+            let staged = changes.first { $0.area == .staged }
+            let working = changes.first { $0.area == .working }
+            let addedInIndex = staged?.flag == "A" && working?.flag != "A" && working?.flag != "U"
+            let addedInWorktree = staged == nil && (working?.flag == "A" || changes.first?.area == .untracked)
+            if addedInIndex || addedInWorktree || staged?.flag == "C" {
+                immediate = .added(lines: doc.contentLineCount)
+            } else if let head = git.head, doc.dirty || !changes.isEmpty {
+                let oldPath = changes.first { $0.flag == "R" }?.oldPath
+                let path = oldPath ?? workspaceRelativePath(of: doc.url, from: git.repo)
+                compareLines(in: doc, repo: git.repo, head: head, path: path)
+                return
+            }
+        }
+        lineJob?.cancel()
+        lineJob = nil
+        lineComparison = nil
+        lineBaseline = nil
+        current?.setLineChanges(immediate)
+    }
+    private func updateChangeButtons() {
+        let enabled = current?.lineChanges.hunks.isEmpty == false
+        previousChange.isEnabled = enabled
+        nextChange.isEnabled = enabled
+    }
+    private func compareLines(in doc: Editor, repo: URL, head: String, path: String) {
+        let request = LineComparison(document: ObjectIdentifier(doc), revision: doc.revision, head: head, path: path)
+        guard request != lineComparison else { return }
+        lineJob?.cancel()
+        lineComparison = request
+        let baseline: GitLineBaseline
+        if let cached = lineBaseline, cached.repo == repo, cached.revision == head, cached.path == path { baseline = cached }
+        else { baseline = GitLineBaseline(repo: repo, revision: head, path: path); lineBaseline = baseline }
+        let job = ShellJob()
+        lineJob = job
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self, weak doc] in
+            guard let self, let doc, self.lineJob === job else { return }
+            let snapshot = doc.text.string
+            self.lineDiffQueue.async {
+                let result = try? baseline.compare(snapshot, job: job)
+                DispatchQueue.main.async {
+                    guard self.lineJob === job, self.current === doc else { return }
+                    self.lineJob = nil
+                    if result == nil { self.lineComparison = nil }
+                    doc.setLineChanges(result ?? GitLineChanges())
+                    self.updateChangeButtons()
                 }
             }
         }

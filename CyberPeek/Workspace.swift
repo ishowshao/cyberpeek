@@ -20,6 +20,10 @@ final class ShellJob {
     private var process: Process?
     private var cancelled = false
 
+    var isCancelled: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return cancelled
+    }
     func cancel() {
         lock.lock()
         cancelled = true
@@ -29,7 +33,7 @@ final class ShellJob {
 
     @discardableResult
     func run(_ binary: URL, _ arguments: [String], in root: URL,
-             success: Set<Int32> = [0], output: ((Data) -> Bool)? = nil) throws -> Data {
+             success: Set<Int32> = [0], standardOutput: FileHandle? = nil, output: ((Data) -> Bool)? = nil) throws -> Data {
         let task = Process(), pipe = Pipe()
         task.executableURL = binary
         task.arguments = arguments
@@ -38,7 +42,7 @@ final class ShellJob {
         env["GIT_OPTIONAL_LOCKS"] = "0"
         env["LC_ALL"] = "C"
         task.environment = env
-        task.standardOutput = pipe
+        if let standardOutput { task.standardOutput = standardOutput } else { task.standardOutput = pipe }
         let errorURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         FileManager.default.createFile(atPath: errorURL.path, contents: nil)
         let errors = try FileHandle(forWritingTo: errorURL)
@@ -50,7 +54,7 @@ final class ShellJob {
         process = task
         lock.unlock()
         var data = Data()
-        while true {
+        while standardOutput == nil {
             let chunk = pipe.fileHandleForReading.availableData
             if chunk.isEmpty { break }
             if let output {
@@ -198,18 +202,23 @@ struct GitState {
     var fileTree = GitFileTree()
     var commits: [Commit] = []
     var branch = ""
+    var head: String?
     var repo: URL
     var pathspec: [String] = []
     static func read(_ folder: URL, job: ShellJob = ShellJob()) throws -> GitState {
         func git(_ args: [String], at url: URL) throws -> Data { try job.run(Tools.git, ["--literal-pathspecs"] + args, in: url) }
-        let top = try git(["rev-parse", "--show-toplevel"], at: folder)
+        // Asking for revisions only yields no output on an unborn branch.
+        let info = try git(["rev-parse", "--revs-only", "HEAD", "--show-toplevel"], at: folder)
+        let parts = info.split(separator: 10, maxSplits: 1)
+        let head = parts.count == 2 ? String(decoding: parts[0], as: UTF8.self) : nil
+        let top = try parts.count == 2 ? Data(parts[1]) : git(["rev-parse", "--show-toplevel"], at: folder)
         let root = URL(fileURLWithPath: String(decoding: top.dropLast(), as: UTF8.self))
         let workspace = folder.resolvingSymlinksInPath().standardizedFileURL
         let relative = workspaceRelativePath(of: workspace, from: root)
         let pathspec = relative == "." ? [] : ["--", relative]
         let output = try git(["status", "--porcelain=v1", "-z", "-b", "--untracked-files=all"] + pathspec, at: root)
         let rows = output.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
-        var state = GitState(repo: root, pathspec: pathspec), i = 0
+        var state = GitState(head: head, repo: root, pathspec: pathspec), i = 0
         while i < rows.count {
             let row = rows[i]; i += 1
             if row.hasPrefix("## ") {

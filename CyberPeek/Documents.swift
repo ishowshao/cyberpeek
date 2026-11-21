@@ -70,7 +70,11 @@ extension Workbench {
         }
     }
     private func wire(_ doc: Editor) {
-        doc.onChange = { [weak self] in self?.statusMessage.stringValue = ""; self?.updateTabs(); self?.updateStatus() }
+        doc.onChange = { [weak self, weak doc] contentChanged in
+            guard let self else { return }
+            self.statusMessage.stringValue = ""; self.updateTabs(); self.updateStatus()
+            if contentChanged, self.current === doc { self.refreshLineChanges() }
+        }
         doc.onCursor = { [weak self,weak doc] in if self?.current === doc { self?.updateStatus() } }
         doc.onDiffLine = { [weak self,weak doc] line in
             guard let self, let doc, let change = doc.change, let target = self.targets[doc.identity],
@@ -90,6 +94,7 @@ extension Workbench {
         editorHost.subviews.forEach { $0.removeFromSuperview() }
         editorHost.place(doc?.view ?? welcome)
         updateTabs(); updateStatus()
+        refreshLineChanges()
         if let doc { window.makeFirstResponder(doc.text); side.reveal(doc.url); doc.becameVisible() }
     }
     var breadcrumbURL: URL? {

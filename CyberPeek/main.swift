@@ -58,7 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func applicationDidBecomeActive(_ notification: Notification) {
         // An external Git command may update an index outside the monitored workspace folder.
-        if workbench?.side.git != nil { workbench.refreshGit() }
+        if workbench?.side.git?.repositories.isEmpty == false { workbench.refreshGit() }
     }
     func applicationWillTerminate(_ notification: Notification) { workbench?.cancelWorkspaceJobs() }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

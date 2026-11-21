@@ -20,9 +20,14 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     var root: URL?, documents = [Editor](), current: Editor?
     var monitor: WorkspaceMonitor?, eventTask: DispatchWorkItem?
     private var gitJob: ShellJob?
+    private var queuedGitPaths = Set<String>()
+    private var fullGitRefreshQueued = false
+    private var pendingEventPaths = Set<String>()
+    private let branchIcon = NSImageView(image: symbol("point.3.connected.trianglepath.dotted", size: 12) ?? NSImage())
     private struct LineComparison: Equatable {
         let document: ObjectIdentifier
         let revision: Int
+        let repo: URL
         let head: String
         let path: String
     }
@@ -50,7 +55,7 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         side.onRefresh = { [weak self] in self?.refresh() }
         side.onQuery = { [weak self] in self?.search($0) }
         side.onOpen = { [weak self] node,pin in self?.openNode(node,pin:pin) }
-        side.onCommit = { [weak self] _, commit in self?.loadCommit(commit) }
+        side.onCommit = { [weak self] repo, commit in self?.loadCommit(commit, repo: repo) }
         quick.onChoose = { [weak self] path,line in
             guard let self, let root = self.root else { return }
             self.open(.file(root.appendingPathComponent(path)),line:line,pin:true)
@@ -73,9 +78,8 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     private func build() {
         let canvas = NSView(); window.contentView = canvas
         let footer = NSView(); footer.fill(Palette.chrome)
-        let scmIcon = NSImageView(image: symbol("point.3.connected.trianglepath.dotted",size:12) ?? NSImage())
-        scmIcon.contentTintColor = Palette.blue
-        let info = stack([scmIcon,branch,statusMessage,NSView(),position,format],spacing:12)
+        branchIcon.contentTintColor = Palette.blue
+        let info = stack([branchIcon,branch,statusMessage,NSView(),position,format],spacing:12)
         info.edgeInsets = .init(top:0,left:12,bottom:0,right:13); footer.place(info)
         let main = NSView()
         let vertical = stack([main,footer],vertical:true); canvas.place(vertical)
@@ -172,6 +176,10 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     func quickOpen() { if root == nil { chooseFolder() } else { quick.show(in:window) } }
     func cancelWorkspaceJobs() {
         queryJob?.cancel(); indexJob?.cancel(); gitJob?.cancel(); eventTask?.cancel(); lineJob?.cancel()
+        gitJob = nil
+        queuedGitPaths.removeAll()
+        fullGitRefreshQueued = false
+        pendingEventPaths.removeAll()
         lineJob = nil
         lineComparison = nil
         lineBaseline = nil
@@ -186,15 +194,23 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         side.reset(folder); selectSection(.files); show(nil)
         window.title = "\(url.lastPathComponent) — CyberPeek"; projectButton.title = "  \(url.lastPathComponent)"
         if remember { UserDefaults.standard.set(folder.path,forKey:"lastFolder") }
-        monitor = WorkspaceMonitor(url:folder) { [weak self] in self?.scheduleRefresh() }
+        monitor = WorkspaceMonitor(url:folder) { [weak self] paths in self?.scheduleRefresh(paths) }
         refresh()
     }
-    func scheduleRefresh() {
+    private func scheduleRefresh(_ paths: [String]) {
+        guard let root else { return }
+        pendingEventPaths.formUnion(paths.isEmpty ? [root.path] : paths)
         eventTask?.cancel()
-        let item = DispatchWorkItem { [weak self] in self?.refresh() }; eventTask = item
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            let changed = self.pendingEventPaths
+            self.pendingEventPaths.removeAll()
+            self.refresh(changedPaths: changed)
+        }
+        eventTask = item
         DispatchQueue.main.asyncAfter(deadline:.now()+0.22,execute:item)
     }
-    func refresh() {
+    func refresh(changedPaths: Set<String>? = nil) {
         guard let root else { return }
         let version = projectVersion
         indexJob?.cancel()
@@ -206,33 +222,46 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
                 self.quick.paths = paths
             }
         }
-        refreshGit()
+        refreshGit(changedPaths: changedPaths)
         if !side.query.stringValue.isEmpty { search(side.query.stringValue) }
         checkDisk()
     }
-    func refreshGit() {
+    func refreshGit(changedPaths: Set<String>? = nil) {
         guard let root else { return }
-        gitJob?.cancel()
+        // Let discovery finish even when several repositories keep generating events.
+        if gitJob != nil {
+            if let changedPaths { queuedGitPaths.formUnion(changedPaths) }
+            else { fullGitRefreshQueued = true }
+            return
+        }
+        let previous = side.git
         let job = ShellJob(); gitJob = job
         let version = projectVersion
         gitVersion += 1; let pass = gitVersion
         DispatchQueue.global(qos:.utility).async {
-            let result = Result { try GitState.read(root, job: job) }
+            let result = Result { try WorkspaceGit.read(in: root, previous: previous, changedPaths: changedPaths, job: job) }
             DispatchQueue.main.async {
-                guard self.projectVersion == version, self.gitVersion == pass else { return }
+                guard self.projectVersion == version, self.gitVersion == pass, self.gitJob === job else { return }
+                self.gitJob = nil
                 switch result {
                 case let .success(state):
-                    self.side.git = state; self.branch.stringValue = state.branch
+                    self.side.git = state
                 case let .failure(error):
                     self.side.git = nil
-                    self.side.gitMessage = error.localizedDescription.contains("not a git repository") ? "当前文件夹没有 Git 仓库" : error.localizedDescription
-                    self.branch.stringValue = root.lastPathComponent
+                    self.side.gitMessage = error.localizedDescription
                 }
+                self.updateBranch()
                 if self.side.section != .search { self.side.reload() }
                 self.refreshLineChanges()
+                if self.fullGitRefreshQueued || !self.queuedGitPaths.isEmpty {
+                    let next = self.fullGitRefreshQueued ? nil : self.queuedGitPaths
+                    self.fullGitRefreshQueued = false
+                    self.queuedGitPaths.removeAll()
+                    self.refreshGit(changedPaths: next)
+                }
             }
         }
-        if let doc = current, let change = doc.change, change.revision == nil, let repo = side.git?.repo {
+        if let doc = current, case let .patch(repo, change)? = targets[doc.identity], change.revision == nil {
             DispatchQueue.global(qos:.utility).async {
                 let patch = try? GitState(repo:repo).diff(change)
                 DispatchQueue.main.async {
@@ -241,12 +270,26 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
             }
         }
     }
+    func updateBranch() {
+        let repository: GitState?
+        switch current.flatMap({ targets[$0.identity] }) {
+        case let .patch(repo, _), let .blob(repo, _, _):
+            repository = side.git?.repositories.first { $0.repo.path == repo.path }
+        default:
+            // With no tab, only show a branch if the workspace itself belongs to a repo.
+            repository = (current?.url ?? root).flatMap { side.git?.repository(containing: $0.path) }
+        }
+        branch.stringValue = repository?.branch ?? ""
+        branch.toolTip = repository?.repo.path
+        branch.isHidden = repository == nil
+        branchIcon.isHidden = repository == nil
+    }
     func refreshLineChanges() {
         defer { updateChangeButtons() }
         var immediate = GitLineChanges()
-        if let doc = current, doc.base != nil, let git = side.git, let root,
+        if let doc = current, doc.base != nil, let workspace = side.git, let git = workspace.repository(containing: doc.url.path), let root,
            doc.url.pathComponents.starts(with: root.pathComponents) {
-            let changes = git.fileTree.changes[doc.url.path] ?? []
+            let changes = workspace.fileTree.changes[doc.url.path] ?? []
             let staged = changes.first { $0.area == .staged }
             let working = changes.first { $0.area == .working }
             let addedInIndex = staged?.flag == "A" && working?.flag != "A" && working?.flag != "U"
@@ -272,7 +315,7 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         nextChange.isEnabled = enabled
     }
     private func compareLines(in doc: Editor, repo: URL, head: String, path: String) {
-        let request = LineComparison(document: ObjectIdentifier(doc), revision: doc.revision, head: head, path: path)
+        let request = LineComparison(document: ObjectIdentifier(doc), revision: doc.revision, repo: repo, head: head, path: path)
         guard request != lineComparison else { return }
         lineJob?.cancel()
         lineComparison = request
@@ -323,15 +366,15 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
             }
         }
     }
-    private func loadCommit(_ commit: Commit) {
-        guard let git = side.git else { return }
+    private func loadCommit(_ commit: Commit, repo: URL) {
+        guard let git = side.git?.repositories.first(where: { $0.repo == repo }) else { return }
         let v = projectVersion
         DispatchQueue.global().async {
             let changes = Result { try git.commitFiles(commit.id) }
             DispatchQueue.main.async {
                 guard self.projectVersion == v else { return }
                 switch changes {
-                case let .success(items): self.side.loadedCommit(commit.id,changes:items)
+                case let .success(items): self.side.loadedCommit(commit.id, repo: repo, changes: items)
                 case let .failure(err): self.statusMessage.stringValue = err.localizedDescription
                 }
             }
@@ -340,12 +383,12 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     private func openNode(_ node: SideNode, pin: Bool) {
         switch node.role {
         case let .file(url, deletion):
-            if let deletion, let git = side.git { open(.patch(git.repo,deletion),pin:pin) }
+            if let deletion, let git = side.git?.repository(containing: url.path) { open(.patch(git.repo,deletion),pin:pin) }
             else { open(.file(url),pin:pin) }
         case let .hit(hit):
             if let root { open(.file(root.appendingPathComponent(hit.path)),line:hit.line,column:hit.column,length:hit.length,pin:pin) }
-        case let .change(c):
-            if let git = side.git { open(.patch(git.repo,c),pin:pin) }
+        case let .change(repo, c):
+            open(.patch(repo, c), pin: pin)
         default: break
         }
     }

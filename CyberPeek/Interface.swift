@@ -111,7 +111,7 @@ func configureTable(_ table: NSTableView) {
     table.intercellSpacing = .zero
 }
 func rowView(_ text: String, icon: String? = nil, color: NSColor = Palette.muted, detail: String? = nil,
-             detailColor: NSColor? = nil, heading: Bool = false) -> NSView {
+             detailColor: NSColor? = nil, heading: Bool = false, truncatesDetail: Bool = false) -> NSView {
     var views = [NSView]()
     if let icon {
         let image = NSImageView(image: symbol(icon, size: 13) ?? NSImage())
@@ -122,8 +122,11 @@ func rowView(_ text: String, icon: String? = nil, color: NSColor = Palette.muted
     let s = stack(views, spacing: 7)
     if let detail {
         let badge = label(detail, 10, color: detailColor ?? color)
-        badge.setContentCompressionResistancePriority(.required, for: .horizontal)
         s.addView(badge, in: detailColor == nil ? .leading : .trailing)
+        if truncatesDetail {
+            badge.widthAnchor.constraint(lessThanOrEqualTo: s.widthAnchor, multiplier: 0.5).isActive = true
+            badge.toolTip = detail
+        } else { badge.setContentCompressionResistancePriority(.required, for: .horizontal) }
     }
     s.edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 8)
     let cell = NSTableCellView()

@@ -131,6 +131,117 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(labels("old"), ["old"])
     }
 
+    @MainActor func testMultipleRepositoriesFollowTheActiveDocument() throws {
+        let parent = try makeTestWorkspace()
+        // Keep this fixture inside the project without inheriting the project's outer repo.
+        let previousCeiling = ProcessInfo.processInfo.environment["GIT_CEILING_DIRECTORIES"]
+        setenv("GIT_CEILING_DIRECTORIES", parent.path, 1)
+        defer {
+            if let previousCeiling { setenv("GIT_CEILING_DIRECTORIES", previousCeiling, 1) }
+            else { unsetenv("GIT_CEILING_DIRECTORIES") }
+        }
+        let workspace = parent.appendingPathComponent("Workspace", isDirectory: true)
+        let client = workspace.appendingPathComponent("client", isDirectory: true)
+        let api = workspace.appendingPathComponent("services/api", isDirectory: true)
+        let notes = workspace.appendingPathComponent("notes.txt")
+        let fm = FileManager.default
+        try fm.createDirectory(at: client, withIntermediateDirectories: true)
+        try fm.createDirectory(at: api.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "notes".write(to: notes, atomically: true, encoding: .utf8)
+        func git(_ repo: URL, _ args: String...) throws {
+            try ShellJob().run(Tools.git, ["-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                                         "-c", "commit.gpgSign=false", "-c", "core.hooksPath=/dev/null"] + args, in: repo)
+        }
+        let clientFile = client.appendingPathComponent("shared.txt"), apiFile = api.appendingPathComponent("shared.txt")
+        try git(client, "init", "-qb", "ui")
+        try "one\ntwo\n".write(to: clientFile, atomically: true, encoding: .utf8)
+        try git(client, "add", ".")
+        try git(client, "commit", "-qm", "Shared baseline")
+        try git(workspace, "clone", "-q", "--no-hardlinks", client.path, api.path)
+        try git(api, "switch", "-qc", "service")
+        try "client changed\ntwo\n".write(to: clientFile, atomically: true, encoding: .utf8)
+        try "one\napi changed\n".write(to: apiFile, atomically: true, encoding: .utf8)
+        try git(api, "add", ".")
+        try fm.createSymbolicLink(at: workspace.appendingPathComponent("alias"), withDestinationURL: api)
+
+        let bench = Workbench()
+        bench.window.orderFront(nil)
+        defer { bench.cancelWorkspaceJobs(); bench.window.orderOut(nil) }
+        bench.openFolder(workspace, remember: false)
+        func waitFor(_ predicate: @escaping () -> Bool, line: UInt = #line) {
+            let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in predicate() }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed, line: line)
+        }
+        waitFor { bench.side.git?.repositories.count == 2 }
+        XCTAssertTrue(bench.branch.isHidden)
+        let tree = try XCTUnwrap(bench.side.git?.fileTree)
+        XCTAssertEqual(tree.changes[clientFile.path]?.first?.area, .working)
+        XCTAssertEqual(tree.changes[apiFile.path]?.first?.area, .staged)
+        XCTAssertTrue(tree.changedDirectories.contains(workspace.path))
+        XCTAssertTrue(tree.changedDirectories.contains(api.deletingLastPathComponent().path))
+
+        bench.open(.file(clientFile), pin: true)
+        waitFor { bench.branch.stringValue == "ui" && bench.current?.lineChanges.kind(at: 1) == .modified }
+        let clientTab = try XCTUnwrap(bench.current)
+        bench.open(.file(apiFile), pin: true)
+        waitFor { bench.branch.stringValue == "service" && bench.current?.lineChanges.kind(at: 2) == .modified }
+        bench.show(clientTab)
+        XCTAssertEqual(bench.branch.stringValue, "ui")
+        bench.open(.file(notes))
+        waitFor { bench.current?.url == notes && bench.branch.isHidden }
+        XCTAssertEqual(bench.current?.lineChanges, GitLineChanges())
+
+        bench.selectSection(.git)
+        let outline = try XCTUnwrap(descendants(NSOutlineView.self, of: bench.side.view).first)
+        func nodes() -> [SideNode] {
+            (0..<outline.numberOfRows).compactMap { outline.item(atRow: $0) as? SideNode }
+        }
+        XCTAssertEqual(nodes().filter { if case .repository = $0.role { return true }; return false }.map(\.name), ["client", "services/api"])
+        func review(_ repo: URL, expected: String) throws {
+            let node = try XCTUnwrap(nodes().first {
+                if case let .change(owner, change) = $0.role { return owner.path == repo.path && change.path == "shared.txt" }
+                return false
+            })
+            bench.side.onOpen?(node, true)
+            waitFor { bench.current?.isPatch == true && bench.current?.text.string.contains(expected) == true }
+        }
+        try review(client, expected: "+client changed")
+        XCTAssertEqual(bench.branch.stringValue, "ui")
+        try review(api, expected: "+api changed")
+        XCTAssertEqual(bench.branch.stringValue, "service")
+        bench.current?.onDiffLine?(2)
+        waitFor { bench.current?.isPatch == false && bench.current?.text.string == "one\napi changed\n" }
+        XCTAssertEqual(bench.branch.stringValue, "service")
+
+        // Both repositories have the same commit hash. Commit children must keep their own origin.
+        for repo in [client, api] {
+            let found = try XCTUnwrap(nodes().first { $0.key == repo.path + "|history" })
+            outline.expandItem(found)
+            let commit = try XCTUnwrap(nodes().first {
+                if case let .commit(owner, _) = $0.role { return owner.path == repo.path }
+                return false
+            })
+            outline.expandItem(commit)
+            waitFor {
+                nodes().contains {
+                    if case let .change(owner, change) = $0.role { return owner.path == repo.path && change.area == .commit }
+                    return false
+                }
+            }
+        }
+        try git(api, "branch", "-m", "service-next")
+        waitFor { bench.branch.stringValue == "service-next" }
+        let extra = workspace.appendingPathComponent("client-worktree", isDirectory: true)
+        try git(client, "worktree", "add", "-qb", "preview", extra.path)
+        waitFor { bench.side.git?.repositories.count == 3 }
+        bench.open(.file(extra.appendingPathComponent("shared.txt")))
+        waitFor { bench.branch.stringValue == "preview" }
+        try git(extra, "switch", "-qc", "preview-next")
+        waitFor { bench.branch.stringValue == "preview-next" }
+        try git(client, "worktree", "remove", extra.path)
+        waitFor { bench.side.git?.repositories.count == 2 && bench.branch.isHidden }
+    }
+
     @MainActor func testHostUsesProjectFixtureAndInvalidPathsCannotChangeWorkspace() throws {
         let expected = URL(fileURLWithPath: #filePath).deletingLastPathComponent().standardizedFileURL
         let host = try XCTUnwrap(NSApp.delegate as? AppDelegate)
@@ -183,7 +294,7 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertTrue(bench.quick.paths.contains("file.md"))
         XCTAssertTrue(Set(bench.quick.paths).isSubset(of: ["file.md", "link"]))
         XCTAssertEqual(bench.side.hits.map(\.path), ["file.md"])
-        let state = try XCTUnwrap(bench.side.git)
+        let state = try XCTUnwrap(bench.side.git?.repository(containing: folder.path))
         XCTAssertEqual(Set(state.changes.map(\.path)), ["\(name)/file.md", "\(name)/link"])
         XCTAssertEqual(state.commits.map(\.title), ["both folders"])
         let commit = try XCTUnwrap(state.commits.first)

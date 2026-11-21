@@ -86,6 +86,7 @@ extension Workbench {
     }
     func show(_ doc: Editor?) {
         current = doc
+        updateBranch()
         crumbBar.isHidden = doc == nil
         if let url = breadcrumbURL, let root {
             let path = workspaceRelativePath(of: url, from: root)
@@ -181,7 +182,7 @@ extension Workbench {
         else { statusMessage.stringValue = message }
     }
     private func refreshSelectedDocument() {
-        guard let doc = current, let change = doc.change, change.revision == nil, let repo = side.git?.repo else { checkDisk(); return }
+        guard let doc = current, case let .patch(repo, change)? = targets[doc.identity], change.revision == nil else { checkDisk(); return }
         let token = loadVersion
         DispatchQueue.global(qos:.utility).async {
             let result = try? GitState(repo:repo).diff(change)

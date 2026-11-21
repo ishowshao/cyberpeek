@@ -199,30 +199,39 @@ struct GitFileTree {
 
 struct GitState {
     var changes: [Change] = []
-    var fileTree = GitFileTree()
     var commits: [Commit] = []
     var branch = ""
     var head: String?
+    var commonDirectory = ""
     var repo: URL
     var pathspec: [String] = []
-    static func read(_ folder: URL, job: ShellJob = ShellJob()) throws -> GitState {
-        func git(_ args: [String], at url: URL) throws -> Data { try job.run(Tools.git, ["--literal-pathspecs"] + args, in: url) }
-        // Asking for revisions only yields no output on an unborn branch.
-        let info = try git(["rev-parse", "--revs-only", "HEAD", "--show-toplevel"], at: folder)
-        let parts = info.split(separator: 10, maxSplits: 1)
-        let head = parts.count == 2 ? String(decoding: parts[0], as: UTF8.self) : nil
-        let top = try parts.count == 2 ? Data(parts[1]) : git(["rev-parse", "--show-toplevel"], at: folder)
-        let root = URL(fileURLWithPath: String(decoding: top.dropLast(), as: UTF8.self))
-        let workspace = folder.resolvingSymlinksInPath().standardizedFileURL
+
+    func contains(_ path: String) -> Bool {
+        let root = repo.path
+        return path == root || path.hasPrefix(root == "/" ? root : root + "/")
+    }
+
+    static func read(repo root: URL, folder workspace: URL, job: ShellJob) throws -> GitState {
+        func git(_ args: [String]) throws -> Data { try job.run(Tools.git, ["--literal-pathspecs"] + args, in: root) }
+        let commonArgs = ["--path-format=absolute", "--git-common-dir"]
+        let info = try git(["rev-parse", "--revs-only", "HEAD"] + commonArgs)
+        let fields = info.dropLast().split(separator: 10, maxSplits: 1)
+        // On an unborn branch rev-parse stops at HEAD before printing the common directory.
+        let head = fields.count == 2 ? String(decoding: fields[0], as: UTF8.self) : nil
+        let common = try fields.count == 2 ? String(decoding: fields[1], as: UTF8.self)
+            : String(decoding: git(["rev-parse"] + commonArgs).dropLast(), as: UTF8.self)
         let relative = workspaceRelativePath(of: workspace, from: root)
         let pathspec = relative == "." ? [] : ["--", relative]
-        let output = try git(["status", "--porcelain=v1", "-z", "-b", "--untracked-files=all"] + pathspec, at: root)
+        let output = try git(["status", "--porcelain=v1", "-z", "-b", "--untracked-files=all"] + pathspec)
         let rows = output.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
-        var state = GitState(head: head, repo: root, pathspec: pathspec), i = 0
+        var state = GitState(head: head, commonDirectory: common, repo: root, pathspec: pathspec), i = 0
         while i < rows.count {
             let row = rows[i]; i += 1
             if row.hasPrefix("## ") {
-                state.branch = String(row.dropFirst(3).components(separatedBy: "...")[0])
+                let name = String(row.dropFirst(3).components(separatedBy: "...")[0])
+                if name.hasPrefix("No commits yet on ") { state.branch = String(name.dropFirst("No commits yet on ".count)) }
+                else if name == "HEAD (no branch)", let head { state.branch = "HEAD · " + head.prefix(7) }
+                else { state.branch = name }
                 continue
             }
             guard row.count >= 4 else { continue }
@@ -236,10 +245,7 @@ struct GitState {
                 if status[1] != " " { state.changes.append(Change(path: path, oldPath: oldPath, flag: String(status[1]), area: .working)) }
             }
         }
-        for change in state.changes {
-            state.fileTree.record(change, repo: root, folder: workspace)
-        }
-        if let data = try? git(["log", "-12", "--format=%H%x00%s", "-z"] + pathspec, at: root) {
+        if let data = try? git(["log", "-12", "--format=%H%x00%s", "-z"] + pathspec) {
             let parts = data.split(separator: 0, omittingEmptySubsequences: false)
             for index in stride(from: 0, to: max(0, parts.count-1), by: 2) {
                 state.commits.append(Commit(id: String(decoding: parts[index], as: UTF8.self), title: String(decoding: parts[index+1], as: UTF8.self)))
@@ -271,17 +277,98 @@ struct GitState {
     }
 }
 
+struct WorkspaceGit {
+    private(set) var repositories: [GitState] = []
+    private(set) var fileTree = GitFileTree()
+    private(set) var errors: [String] = []
+
+    func repository(containing path: String) -> GitState? {
+        repositories.first { $0.contains(path) }
+    }
+
+    private static func discover(in folder: URL, job: ShellJob) throws -> [URL] {
+        do {
+            let data = try job.run(Tools.git, ["rev-parse", "--show-toplevel"], in: folder)
+            return [URL(fileURLWithPath: String(decoding: data.dropLast(), as: UTF8.self), isDirectory: true)]
+        } catch let error as CyberPeekError where error.message.contains("not a git repository") {
+            // An unmanaged workspace can contain several independent worktrees.
+        }
+        let fm = FileManager.default
+        let keys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey]
+        let excluded: Set<String> = [".git", ".build", ".vendor", "DerivedData", "node_modules"]
+        guard let entries = fm.enumerator(at: folder, includingPropertiesForKeys: Array(keys), options: [.skipsPackageDescendants],
+                                          errorHandler: { _, _ in true }) else { return [] }
+        var roots = [URL]()
+        for case let url as URL in entries {
+            if job.isCancelled { throw CancellationError() }
+            if excluded.contains(url.lastPathComponent) { entries.skipDescendants(); continue }
+            let values = try? url.resourceValues(forKeys: keys)
+            guard values?.isDirectory == true, values?.isSymbolicLink != true else { continue }
+            if fm.fileExists(atPath: url.appendingPathComponent(".git").path) {
+                roots.append(url)
+                entries.skipDescendants()
+            }
+        }
+        return roots.sorted { $0.path < $1.path }
+    }
+
+    // Linked worktrees share Git metadata. A checkout in one can report its event in another.
+    private func affectedGitDirectories(for paths: Set<String>) -> Set<String>? {
+        guard errors.isEmpty else { return nil }
+        var touched = [String: GitState]()
+        for path in paths {
+            guard let owner = repository(containing: path) else { return nil }
+            touched[owner.repo.path] = owner
+        }
+        for owner in touched.values where !FileManager.default.fileExists(atPath: owner.repo.appendingPathComponent(".git").path) {
+            return nil
+        }
+        return Set(touched.values.map(\.commonDirectory))
+    }
+
+    static func read(in folder: URL, previous: Self?, changedPaths: Set<String>?, job: ShellJob) throws -> Self {
+        let affected = changedPaths.flatMap { previous?.affectedGitDirectories(for: $0) }
+        let known = previous?.repositories ?? []
+        let cached = Dictionary(uniqueKeysWithValues: known.map { ($0.repo, $0) })
+        let roots = try affected == nil ? discover(in: folder, job: job) : known.map(\.repo)
+        var result = Self()
+        for root in roots {
+            if job.isCancelled { throw CancellationError() }
+            let state: GitState
+            if let affected, let saved = cached[root], !affected.contains(saved.commonDirectory) {
+                state = saved
+            } else {
+                // An opened subdirectory of an existing repo keeps its original pathspec.
+                let scope = folder.pathComponents.starts(with: root.pathComponents) ? folder : root
+                do { state = try GitState.read(repo: root, folder: scope, job: job) }
+                catch is CancellationError { throw CancellationError() }
+                catch {
+                    let name = scope.path == folder.path ? folder.lastPathComponent : workspaceRelativePath(of: root, from: folder)
+                    result.errors.append("\(name) · \(error.localizedDescription)")
+                    continue
+                }
+            }
+            result.repositories.append(state)
+            for change in state.changes { result.fileTree.record(change, repo: root, folder: folder) }
+        }
+        return result
+    }
+}
+
 final class WorkspaceMonitor {
     private var stream: FSEventStreamRef?
-    private let action: () -> Void
-    init(url: URL, action: @escaping () -> Void) {
+    private let action: ([String]) -> Void
+    init(url: URL, action: @escaping ([String]) -> Void) {
         self.action = action
         var context = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(self).toOpaque(), retain: nil, release: nil, copyDescription: nil)
-        stream = FSEventStreamCreate(nil, { _, info, _, _, _, _ in
+        stream = FSEventStreamCreate(nil, { _, info, count, paths, flags, _ in
             guard let info else { return }
-            Unmanaged<WorkspaceMonitor>.fromOpaque(info).takeUnretainedValue().action()
+            let monitor = Unmanaged<WorkspaceMonitor>.fromOpaque(info).takeUnretainedValue()
+            let all = (0..<count).contains { flags[$0] & UInt32(kFSEventStreamEventFlagMustScanSubDirs) != 0 }
+            let urls = Unmanaged<CFArray>.fromOpaque(paths).takeUnretainedValue() as? [String] ?? []
+            monitor.action(all ? [] : urls)
         }, &context, [url.path] as CFArray, FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 0.28,
-           FSEventStreamCreateFlags(kFSEventStreamCreateFlagWatchRoot | kFSEventStreamCreateFlagNoDefer))
+           FSEventStreamCreateFlags(kFSEventStreamCreateFlagWatchRoot | kFSEventStreamCreateFlagNoDefer | kFSEventStreamCreateFlagUseCFTypes))
         if let stream {
             FSEventStreamSetDispatchQueue(stream, .main)
             FSEventStreamStart(stream)

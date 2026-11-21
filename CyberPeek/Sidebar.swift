@@ -4,7 +4,7 @@ enum Section: String { case files = "资源管理器", search = "搜索", git = 
 
 final class SideNode {
     enum Role {
-        case directory(URL), file(URL, deletion: Change? = nil), group, hit(SearchHit), change(Change), commit(Commit), message
+        case directory(URL), file(URL, deletion: Change? = nil), group, repository(String), hit(SearchHit), change(URL, Change), commit(URL, Commit), message
     }
     let name: String, key: String
     let role: Role
@@ -13,7 +13,7 @@ final class SideNode {
         self.name = name; self.key = key; self.role = role; self.children = children
     }
     var expandable: Bool {
-        switch role { case .directory,.group,.commit: return true; default: return false }
+        switch role { case .directory,.group,.repository,.commit: return true; default: return false }
     }
     func items(in tree: GitFileTree?) -> [SideNode] {
         if let children { return children }
@@ -83,17 +83,18 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
         didSet { outline.onCopyRelativePath = onCopyRelativePath }
     }
     var onQuery: ((String) -> Void)?
-    var onCommit: ((SideNode, Commit) -> Void)?
+    var onCommit: ((URL, Commit) -> Void)?
     var onFolder: (() -> Void)?
     var onRefresh: (() -> Void)?
     private(set) var section = Section.files
     var folder: URL?
-    var git: GitState?
+    var git: WorkspaceGit?
     var gitMessage = "正在读取仓库…"
     var hits: [SearchHit] = []
     var searchInfo = ""
     private var roots: [SideNode] = []
     private var states: [Section: Set<String>] = [:]
+    private var gitExpansion = [String: Bool]()
     private var reloading = false
     private var commitCache: [String:[SideNode]] = [:]
     private let controls = NSView(), searchBox = NSView()
@@ -128,7 +129,7 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
     }
     func reset(_ url: URL) {
         folder = url; git = nil; gitMessage = "正在读取仓库…"; query.stringValue = ""; hits = []; searchInfo = ""
-        states = [:]; roots = []; commitCache = [:]
+        states = [:]; gitExpansion = [:]; roots = []; commitCache = [:]
         switchTo(.files)
     }
     func switchTo(_ next: Section) {
@@ -145,6 +146,14 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
     }
     private func remember() {
         guard !roots.isEmpty else { return }
+        if section == .git {
+            for row in 0..<outline.numberOfRows {
+                if let node = outline.item(atRow: row) as? SideNode, node.expandable {
+                    gitExpansion[node.key] = outline.isItemExpanded(node)
+                }
+            }
+            return
+        }
         states[section] = Set((0..<outline.numberOfRows).compactMap { row in
             guard let node = outline.item(atRow: row) as? SideNode, outline.isItemExpanded(node) else { return nil }
             return node.key
@@ -160,21 +169,21 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
             count.stringValue = ""
         case .git:
             roots = []
-            if let git {
-                for area in [Change.Area.staged,.working,.untracked] {
-                    let changes = git.changes.filter { $0.area == area }
-                    if !changes.isEmpty {
-                        roots.append(SideNode("\(area.rawValue)  ·  \(changes.count)",area.rawValue,.group,children:changes.map(changeNode)))
+            count.stringValue = ""
+            if let git, let folder {
+                for state in git.repositories {
+                    let groups = gitGroups(for: state)
+                    if state.contains(folder.path) {
+                        roots += groups
+                        count.stringValue = state.branch
+                    } else {
+                        roots.append(SideNode(workspaceRelativePath(of: state.repo, from: folder), state.repo.path,
+                                              .repository(state.branch), children: groups))
                     }
                 }
-                if git.changes.isEmpty { roots.append(SideNode("工作区干净","clean",.message)) }
-                if !git.commits.isEmpty {
-                    roots.append(SideNode("最近提交","history",.group,children:git.commits.map {
-                        SideNode($0.title,$0.id,.commit($0),children:commitCache[$0.id])
-                    }))
-                }
-                count.stringValue = git.branch
-            } else { roots = [SideNode(gitMessage,"git-message",.message)]; count.stringValue = "" }
+                for error in git.errors { roots.append(SideNode(error, error, .message)) }
+                if roots.isEmpty { roots = [SideNode("当前文件夹没有 Git 仓库", "git-message", .message)] }
+            } else { roots = [SideNode(gitMessage, "git-message", .message)] }
         case .search:
             let groups = Dictionary(grouping: hits, by: \.path)
             roots = groups.keys.sorted().map { path in
@@ -185,8 +194,14 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
         outline.reloadData()
         func expand(_ nodes: [SideNode], depth: Int) {
             for node in nodes where node.expandable {
-                let initiallyOpen = depth == 0 && (section != .git || node.key != "history")
-                let open = states[section]?.contains(node.key) ?? initiallyOpen
+                let open: Bool
+                if section == .git {
+                    switch node.role {
+                    case .repository: open = gitExpansion[node.key] ?? true
+                    case .group: open = gitExpansion[node.key] ?? !node.key.hasSuffix("|history")
+                    default: open = gitExpansion[node.key] ?? false
+                    }
+                } else { open = states[section]?.contains(node.key) ?? (depth == 0) }
                 if open || (section == .search && depth == 0 && groupsNew.contains(node.key)) {
                     outline.expandItem(node); expand(node.items(in: git?.fileTree),depth:depth+1)
                 }
@@ -215,11 +230,32 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
         }
     }
     private var previousSearchGroups = Set<String>()
-    private func changeNode(_ change: Change) -> SideNode {
-        SideNode(change.path,"\(change.area.rawValue)|\(change.revision ?? "")|\(change.path)",.change(change))
+    private func gitGroups(for state: GitState) -> [SideNode] {
+        let repo = state.repo
+        var groups = [SideNode]()
+        for area in [Change.Area.staged, .working, .untracked] {
+            let changes = state.changes.filter { $0.area == area }
+            if !changes.isEmpty {
+                groups.append(SideNode("\(area.rawValue)  ·  \(changes.count)", "\(repo.path)|\(area.rawValue)", .group,
+                                       children: changes.map { changeNode($0, repo: repo) }))
+            }
+        }
+        if state.changes.isEmpty { groups.append(SideNode("工作区干净", "\(repo.path)|clean", .message)) }
+        if !state.commits.isEmpty {
+            let commits = state.commits.map { commit in
+                let key = "\(repo.path)|\(commit.id)"
+                return SideNode(commit.title, key, .commit(repo, commit), children: commitCache[key])
+            }
+            groups.append(SideNode("最近提交", "\(repo.path)|history", .group, children: commits))
+        }
+        return groups
     }
-    func loadedCommit(_ id: String, changes: [Change]) {
-        commitCache[id] = changes.map(changeNode)
+
+    private func changeNode(_ change: Change, repo: URL) -> SideNode {
+        SideNode(change.path, "\(repo.path)|\(change.area.rawValue)|\(change.revision ?? "")|\(change.path)", .change(repo, change))
+    }
+    func loadedCommit(_ id: String, repo: URL, changes: [Change]) {
+        commitCache["\(repo.path)|\(id)"] = changes.map { changeNode($0, repo: repo) }
         if section == .git { reload() }
     }
     func controlTextDidChange(_ obj: Notification) { onQuery?(query.stringValue) }
@@ -227,7 +263,7 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
     func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any { ((item as? SideNode)?.items(in: git?.fileTree) ?? roots)[index] }
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool { (item as? SideNode)?.expandable == true }
     func outlineViewItemDidExpand(_ notification: Notification) {
-        if let node = notification.userInfo?["NSObject"] as? SideNode, case let .commit(commit) = node.role, node.children == nil { onCommit?(node,commit) }
+        if let node = notification.userInfo?["NSObject"] as? SideNode, case let .commit(repo, commit) = node.role, node.children == nil { onCommit?(repo, commit) }
     }
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
         guard let node = item as? SideNode else { return nil }
@@ -252,11 +288,12 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
             let row = rowView(node.name, icon: icon.0, color: icon.1, detail: changed ? "•" : nil, detailColor: Palette.blue)
             if changed { row.toolTip = "\(node.name) · 包含 Git 变更" }
             return row
+        case let .repository(branch): return rowView(node.name, icon: "folder", detail: branch, truncatesDetail: true)
         case .group: return rowView(node.name,heading:true)
         case .message: return rowView(node.name,color:Palette.muted)
         case .hit: return rowView(node.name)
-        case let .change(c): return rowView(node.name,icon:"doc",color:c.flag == "D" ? Palette.red : Palette.green,detail:c.flag)
-        case let .commit(c): return rowView(c.title, icon:"clock", color:Palette.blue,detail:String(c.id.prefix(7)))
+        case let .change(_, c): return rowView(node.name,icon:"doc",color:c.flag == "D" ? Palette.red : Palette.green,detail:c.flag)
+        case let .commit(_, c): return rowView(c.title, icon:"clock", color:Palette.blue,detail:String(c.id.prefix(7)))
         }
     }
     @objc func click() { activate(pin:false) }

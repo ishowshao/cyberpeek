@@ -13,6 +13,50 @@ extension XCTestCase {
 }
 
 final class WorkspaceTests: XCTestCase {
+    @MainActor private func descendants<T: NSView>(_ type: T.Type, of view: NSView) -> [T] {
+        if let match = view as? T { return [match] }
+        return view.subviews.flatMap { descendants(type, of: $0) }
+    }
+
+    @MainActor func testCollapseFoldersClearsNestedExpansionAndSurvivesRefresh() throws {
+        let root = try makeTestWorkspace()
+        for path in ["App/Models", "Tests/Unit", "Tests/Unopened/Deep"] {
+            let directory = root.appendingPathComponent(path, isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try Data().write(to: directory.appendingPathComponent("sample.swift"))
+        }
+        let side = Sidebar()
+        side.reset(root)
+        let outline = try XCTUnwrap(descendants(NSOutlineView.self, of: side.view).first)
+        let button = try XCTUnwrap(descendants(NSButton.self, of: side.view).first { $0.toolTip == "折叠所有文件夹" })
+        func visible() -> [SideNode] {
+            (0..<outline.numberOfRows).compactMap { outline.item(atRow: $0) as? SideNode }
+        }
+        func node(_ name: String) throws -> SideNode { try XCTUnwrap(visible().first { $0.name == name }) }
+        side.reveal(root.appendingPathComponent("App/Models/sample.swift"))
+        outline.collapseItem(try node("App"))
+        side.reveal(root.appendingPathComponent("Tests/Unit/sample.swift"))
+        let unopened = try node("Unopened")
+        XCTAssertNil(unopened.children)
+
+        button.performClick(nil)
+        XCTAssertEqual(visible().map(\.name), [root.lastPathComponent, "App", "Tests"])
+        XCTAssertNil(unopened.children)
+        for name in ["App", "Tests"] { outline.expandItem(try node(name)) }
+        XCTAssertFalse(outline.isItemExpanded(try node("Models")))
+        XCTAssertFalse(outline.isItemExpanded(try node("Unit")))
+
+        button.performClick(nil)
+        side.reload()
+        XCTAssertEqual(visible().map(\.name), [root.lastPathComponent, "App", "Tests"])
+        for section in [Section.search, .git] { side.switchTo(section); XCTAssertTrue(button.isHidden) }
+        side.switchTo(.files)
+        XCTAssertFalse(button.isHidden)
+        outline.collapseItem(try node(root.lastPathComponent))
+        button.performClick(nil)
+        XCTAssertEqual(visible().map(\.name), [root.lastPathComponent])
+    }
+
     @MainActor func testExplorerShowsGitChangesAndOpensDeletedFileDiff() throws {
         let repo = try makeTestWorkspace()
         let root = repo.appendingPathComponent("src [1]", isDirectory: true)
@@ -45,10 +89,6 @@ final class WorkspaceTests: XCTestCase {
         func waitFor(_ predicate: @escaping () -> Bool) {
             let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in predicate() }, object: nil)
             XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 6), .completed)
-        }
-        func descendants<T: NSView>(_ type: T.Type, of view: NSView) -> [T] {
-            if let match = view as? T { return [match] }
-            return view.subviews.flatMap { descendants(type, of: $0) }
         }
         let outline = try XCTUnwrap(descendants(NSOutlineView.self, of: bench.side.view).first)
         func row(_ name: String) -> Int? {

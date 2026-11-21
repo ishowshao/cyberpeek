@@ -97,13 +97,16 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
     private var reloading = false
     private var commitCache: [String:[SideNode]] = [:]
     private let controls = NSView(), searchBox = NSView()
-    private var refresh: ActionButton!
+    private lazy var collapseButton = ActionButton(icon: "rectangle.stack.badge.minus", tip: "折叠所有文件夹") { [weak self] in
+        self?.collapseFolders()
+    }
     override init() {
         super.init()
         view.fill(Palette.sidebar)
-        refresh = ActionButton(icon: "arrow.clockwise", tip: "刷新") { [weak self] in self?.onRefresh?() }
+        let refresh = ActionButton(icon: "arrow.clockwise", tip: "刷新") { [weak self] in self?.onRefresh?() }
         let folderButton = ActionButton(icon: "folder.badge.plus", tip: "打开文件夹…") { [weak self] in self?.onFolder?() }
-        let heading = stack([header, NSView(), folderButton, refresh], spacing: 9)
+        collapseButton.isHidden = true
+        let heading = stack([header, NSView(), folderButton, refresh, collapseButton], spacing: 9)
         controls.place(heading, inset: 9)
         query.placeholderString = "搜索工作区"; query.delegate = self
         query.sendsSearchStringImmediately = true
@@ -132,6 +135,12 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
         remember()
         section = next; roots = []; header.stringValue = section.rawValue
         searchBox.isHidden = section != .search
+        collapseButton.isHidden = section != .files || folder == nil
+        reload(rememberCurrent: false)
+    }
+    private func collapseFolders() {
+        guard section == .files, let root = roots.first else { return }
+        states[.files] = outline.isItemExpanded(root) ? [root.key] : []
         reload(rememberCurrent: false)
     }
     private func remember() {

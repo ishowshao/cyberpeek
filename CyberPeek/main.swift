@@ -18,6 +18,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pending = [URL]()
     private var launched = false
     private var rememberFolders = true
+    private let sessionKey = "workspaceSession.v1"
+    private var quitting = false
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         let app = NSApplication.shared
         installMenu()
@@ -32,11 +35,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         // A test runner without the scheme's fixture starts with an empty window.
-        if environment["XCTestConfigurationFilePath"] != nil || environment["XCTestBundlePath"] != nil { return }
+        if environment["XCTestConfigurationFilePath"] != nil || environment["XCTestBundlePath"] != nil {
+            rememberFolders = false
+            return
+        }
         let urls = pending.isEmpty ? Self.fileArguments(CommandLine.arguments.dropFirst()) : pending
         pending.removeAll()
+        let defaults = UserDefaults.standard
+        let saved = defaults.data(forKey: sessionKey).flatMap { try? JSONDecoder().decode([WorkspaceSession].self, from: $0) }
+        if let saved {
+            for session in saved where session.folder.isFileURL &&
+                (try? session.folder.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+                let bench = workbenches.first(where: { $0.root == nil }) ?? makeWorkbench()
+                bench.openFolder(session.folder, remember: false)
+                bench.restoreTabs(session)
+                bench.window.makeKeyAndOrderFront(nil)
+            }
+        }
         if !urls.isEmpty { open(urls) }
-        else if let last = UserDefaults.standard.string(forKey:"lastFolder"), last != "/" {
+        else if saved == nil, let last = defaults.string(forKey:"lastFolder"), last != "/" {
             initial.openFolder(URL(fileURLWithPath:last), remember: false)
         }
     }
@@ -63,7 +80,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             bench.window.cascadeTopLeft(from: NSPoint(x: frame.minX + 22, y: frame.maxY - 22))
         }
         bench.onOpenFolder = { [weak self, weak bench] url in self?.open([url], from: bench) }
-        bench.onClose = { [weak self] owner in self?.workbenches.removeAll { $0 === owner } }
+        bench.onClose = { [weak self] owner in
+            guard let self else { return }
+            // Closing the last window also quits the app.
+            if !self.quitting, self.workbenches.count == 1 { self.saveSession([owner].compactMap(\.session)) }
+            self.workbenches.removeAll { $0 === owner }
+        }
         workbenches.append(bench)
         return bench
     }
@@ -105,11 +127,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let bench = activeWorkbench, bench.side.git?.repositories.isEmpty == false { bench.refreshGit() }
     }
     func applicationWillTerminate(_ notification: Notification) { workbenches.forEach { $0.cancelWorkspaceJobs() } }
+    private func saveSession(_ windows: [WorkspaceSession]) {
+        if rememberFolders, let data = try? JSONEncoder().encode(windows) {
+            UserDefaults.standard.set(data, forKey: sessionKey)
+        }
+    }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // Restore the frontmost workspace last. Save prompts can change the key window.
+        let front = activeWorkbench
+        let windows = workbenches.filter { $0 !== front } + [front].compactMap { $0 }
         for bench in workbenches where bench.documents.contains(where: \.dirty) {
             focus(bench)
             if !bench.documents.allSatisfy({ bench.confirmClosing($0) }) { return .terminateCancel }
         }
+        if !windows.isEmpty { saveSession(windows.compactMap(\.session)) }
+        quitting = true
         return .terminateNow
     }
     @objc func newWindow() { focus(makeWorkbench()) }

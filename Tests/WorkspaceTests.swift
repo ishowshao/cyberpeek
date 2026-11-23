@@ -562,6 +562,64 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(initial.root?.path, expected.path)
     }
 
+    @MainActor func testSessionRestoresAvailableTabsInOrderAndKeepsSelectedPreview() async throws {
+        let folder = try makeTestWorkspace()
+        let file = folder.appendingPathComponent("notes.txt"), svg = folder.appendingPathComponent("icon.svg")
+        let gone = folder.appendingPathComponent("gone.txt")
+        try "original".write(to: file, atomically: true, encoding: .utf8)
+        try "removed".write(to: gone, atomically: true, encoding: .utf8)
+        try "<svg xmlns='http://www.w3.org/2000/svg' width='4' height='4'/>".write(to: svg, atomically: true, encoding: .utf8)
+        try ShellJob().run(Tools.git, ["init", "-q"], in: folder)
+        try ShellJob().run(Tools.git, ["add", "notes.txt"], in: folder)
+        let index = Workbench.Target.blob(folder, "", "notes.txt")
+        let diff = Workbench.Target.patch(folder, Change(path: "notes.txt", oldPath: nil, flag: "M", area: .working))
+        try "modified".write(to: file, atomically: true, encoding: .utf8)
+
+        let first = Workbench(), next = Workbench()
+        defer { for bench in [first, next] { bench.cancelWorkspaceJobs(); bench.window.orderOut(nil) } }
+        first.openFolder(folder, remember: false)
+        let targets: [Workbench.Target] = [.file(file), .file(gone), index, diff, .file(svg)]
+        for target in targets {
+            await withCheckedContinuation { done in
+                first.open(target, pin: true) { done.resume() }
+            }
+        }
+        let svgTab = try XCTUnwrap(first.current)
+        svgTab.pinned = false
+        svgTab.showsSVGPreview = true
+        let saved = try XCTUnwrap(first.session)
+        XCTAssertEqual(saved.tabs.map(\.target), targets)
+        XCTAssertEqual(saved.selected, .file(svg))
+        let stored = try JSONEncoder().encode(saved)
+        try FileManager.default.removeItem(at: gone)
+        // The working diff is now empty, but the file and its indexed version still open.
+        try "on disk at relaunch".write(to: file, atomically: true, encoding: .utf8)
+        try ShellJob().run(Tools.git, ["add", "notes.txt"], in: folder)
+        let restore = try JSONDecoder().decode(WorkspaceSession.self, from: stored)
+        next.openFolder(restore.folder, remember: false)
+        next.restoreTabs(restore)
+        XCTAssertEqual(next.session?.tabs.map(\.target), targets)
+        let loaded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in next.restoringSession == nil }, object: nil)
+        await fulfillment(of: [loaded], timeout: 5)
+        XCTAssertEqual(next.session?.tabs.map(\.target), [.file(file), index, .file(svg)])
+        XCTAssertEqual(next.documents.map(\.pinned), [true, true, false])
+        XCTAssertEqual(next.current?.url, svg)
+        XCTAssertEqual(next.current?.showsSVGPreview, true)
+        XCTAssertEqual((next.documents.first as? Editor)?.text.string, "on disk at relaunch")
+        XCTAssertNil(next.window.attachedSheet)
+
+        next.openFolder(folder, remember: false)
+        next.restoreTabs(restore)
+        let extras = ["first.txt", "second.txt"].map { folder.appendingPathComponent($0) }
+        for url in extras { try Data().write(to: url); next.enqueueFile(url) }
+        let requested = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            next.restoringSession == nil && next.queuedFiles.isEmpty
+        }, object: nil)
+        await fulfillment(of: [requested], timeout: 5)
+        XCTAssertEqual(next.session?.tabs.map(\.target), [.file(file), index, .file(svg)] + extras.map(Workbench.Target.file))
+        XCTAssertEqual(next.activeDocument?.url, extras.last)
+    }
+
     @MainActor func testWorkspacesOwnSeparateWindowsAndReopeningRestoresExistingEditor() async throws {
         let host = try XCTUnwrap(NSApp.delegate as? AppDelegate)
         let original = try XCTUnwrap(host.activeWorkbench)
@@ -666,7 +724,7 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertTrue((outer.documents + inner.documents).allSatisfy(\.pinned))
     }
 
-    @MainActor func testOpeningSubfolderScopesIndexSearchAndGit() throws {
+    @MainActor func testOpeningSubfolderScopesIndexSearchAndGit() async throws {
         let repo = try makeTestWorkspace()
         let name = "src [1]"
         let folder = repo.appendingPathComponent(name, isDirectory: true)
@@ -690,15 +748,20 @@ final class WorkspaceTests: XCTestCase {
         try FileManager.default.createSymbolicLink(at: folder.appendingPathComponent("link"), withDestinationURL: sibling)
 
         let bench = Workbench()
+        // Quick Open only indexes while its panel is visible in an active workspace.
+        if !NSApp.isActive {
+            _ = try await NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: .init())
+        }
+        bench.window.makeKeyAndOrderFront(nil)
         bench.openFolder(folder, remember: false)
-        defer { bench.quick.dismiss(); bench.cancelWorkspaceJobs() }
+        defer { bench.quick.dismiss(); bench.cancelWorkspaceJobs(); bench.window.orderOut(nil) }
         XCTAssertNil(bench.indexJob)
         bench.quickOpen()
         bench.search("needle")
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             !bench.quick.paths.isEmpty && bench.side.git != nil && !bench.side.hits.isEmpty
         }, object: nil)
-        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed)
+        await fulfillment(of: [ready], timeout: 5)
         XCTAssertTrue(bench.quick.paths.contains("file.md"))
         XCTAssertTrue(Set(bench.quick.paths).isSubset(of: ["file.md", "link"]))
         XCTAssertEqual(bench.side.hits.map(\.path), ["file.md"])

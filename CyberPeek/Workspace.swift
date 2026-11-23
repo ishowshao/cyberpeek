@@ -179,8 +179,8 @@ enum WorkspaceSearch {
     }
 }
 
-struct Change: Hashable {
-    enum Area: String { case staged = "已暂存", working = "未暂存", untracked = "未跟踪", commit = "提交" }
+struct Change: Hashable, Codable {
+    enum Area: String, Codable { case staged = "已暂存", working = "未暂存", untracked = "未跟踪", commit = "提交" }
     let path: String
     let oldPath: String?
     let flag: String

@@ -14,9 +14,45 @@ class DocumentTab: NSObject {
     }
 }
 
-private enum OpenedContent {
+enum OpenedContent {
     case text(String, DiskText?)
     case image(RasterImage?, ImageFileVersion?)
+}
+
+struct DocumentRequest {
+    let target: Workbench.Target
+    let id: String, url: URL, change: Change?, title: String
+
+    init(_ target: Workbench.Target) {
+        self.target = target
+        switch target {
+        case let .file(file):
+            url = file.resolvingSymlinksInPath().standardizedFileURL; id = "file|" + url.path; change = nil; title = url.lastPathComponent
+        case let .patch(repo,c):
+            url = repo.appendingPathComponent(c.path); id = "diff|\(repo.path)|\(c.area)|\(c.revision ?? "")|\(c.path)"; change = c
+            title = "\(url.lastPathComponent) (\(c.area.rawValue))"
+        case let .blob(repo,rev,path):
+            url = repo.appendingPathComponent(path); id = "blob|\(repo.path)|\(rev)|\(path)"; change = nil
+            title = "\(url.lastPathComponent) (\(rev.isEmpty ? "暂存区" : String(rev.prefix(7))))"
+        }
+    }
+
+    func read() throws -> OpenedContent {
+        let isImage = RasterImage.extensions.contains(url.pathExtension.lowercased())
+        switch target {
+        case .file:
+            if isImage {
+                let version = try ImageFileVersion(url)
+                return .image(try? RasterImage(url: url), version)
+            }
+            let disk = try DiskText.read(url); return .text(disk.text,disk)
+        case let .patch(repo,c):
+            return .text(try GitState(repo:repo).diff(c), nil)
+        case let .blob(repo, rev, path):
+            let data = try ShellJob().run(Tools.git, ["show","\(rev):\(path)"], in:repo)
+            return isImage ? .image(try? RasterImage(data: data), nil) : .text(try DiskText(data).text,nil)
+        }
+    }
 }
 
 extension Workbench {
@@ -41,13 +77,13 @@ extension Workbench {
         open(next.target,line:next.line,column:next.column,record:false)
     }
     func enqueueFile(_ url: URL) {
-        queuedFiles.append(url)
+        queuedFiles.append((url, replacePreview: restoringSession == nil))
         if queuedFiles.count == 1 { openNextFile() }
     }
     private func openNextFile() {
-        guard let url = queuedFiles.first else { return }
+        guard let file = queuedFiles.first else { return }
         let workspace = projectVersion
-        open(.file(url), pin: true) { [weak self] in
+        open(.file(file.url), pin: true, replacePreview: file.replacePreview) { [weak self] in
             guard let self, self.projectVersion == workspace else { return }
             self.queuedFiles.removeFirst()
             if self.queuedFiles.isEmpty { self.queuedFiles = []; return }
@@ -57,73 +93,56 @@ extension Workbench {
         }
     }
     func open(_ target: Target, line: Int? = nil, column: Int = 0, length: Int = 0, pin: Bool = false, record: Bool = true,
-              explorerReveal: ExplorerReveal = .reveal, completion: (() -> Void)? = nil) {
-        let id: String, url: URL, change: Change?, title: String
-        switch target {
-        case let .file(file):
-            url = file.resolvingSymlinksInPath().standardizedFileURL; id = "file|" + url.path; change = nil; title = url.lastPathComponent
-        case let .patch(repo,c):
-            url = repo.appendingPathComponent(c.path); id = "diff|\(repo.path)|\(c.area)|\(c.revision ?? "")|\(c.path)"; change = c
-            title = "\(url.lastPathComponent) (\(c.area.rawValue))"
-        case let .blob(repo,rev,path):
-            url = repo.appendingPathComponent(path); id = "blob|\(repo.path)|\(rev)|\(path)"; change = nil
-            title = "\(url.lastPathComponent) (\(rev.isEmpty ? "暂存区" : String(rev.prefix(7))))"
-        }
+              explorerReveal: ExplorerReveal = .reveal, replacePreview: Bool = true, completion: (() -> Void)? = nil) {
+        let request = DocumentRequest(target)
         loadVersion += 1; let version = loadVersion
         func activate(_ doc: DocumentTab) {
             if record, activeDocument !== doc || line != nil { rememberLocation() }
             if pin { doc.pinned = true }
             let editor = doc as? Editor
             if line != nil { editor?.showsSVGPreview = false }
-            targets[id] = target; show(doc, explorerReveal: explorerReveal)
+            targets[request.id] = target; show(doc, explorerReveal: explorerReveal)
             if let line { editor?.go(line,column:column,length:length) }
         }
-        if let old = documents.first(where:{ $0.identity == id }) {
+        if let old = documents.first(where:{ $0.identity == request.id }) {
             activate(old); refreshSelectedDocument(); completion?(); return
         }
         pendingOpen = target
         statusMessage.stringValue = "正在打开…"
         DispatchQueue.global(qos:.userInitiated).async {
-            let result = Result { () throws -> OpenedContent in
-                let isImage = RasterImage.extensions.contains(url.pathExtension.lowercased())
-                switch target {
-                case .file:
-                    if isImage {
-                        let version = try ImageFileVersion(url)
-                        return .image(try? RasterImage(url: url), version)
-                    }
-                    let disk = try DiskText.read(url); return .text(disk.text,disk)
-                case let .patch(repo,c):
-                    let patch = try GitState(repo:repo).diff(c); return .text(patch.isEmpty ? "没有文本差异" : patch,nil)
-                case let .blob(repo, rev, path):
-                    let data = try ShellJob().run(Tools.git, ["show","\(rev):\(path)"], in:repo)
-                    return isImage ? .image(try? RasterImage(data: data), nil) : .text(try DiskText(data).text,nil)
-                }
-            }
+            let result = Result { try request.read() }
             DispatchQueue.main.async {
                 defer { completion?() }
                 guard self.loadVersion == version else { return }
                 self.pendingOpen = nil
                 self.statusMessage.stringValue = ""
                 do {
-                    let doc: DocumentTab
-                    switch try result.get() {
-                    case let .text(source, disk):
-                        let editor = Editor(url:url,identity:id,title:title,source:source,disk:disk,change:change,patch:change != nil)
-                        self.wire(editor)
-                        doc = editor
-                    case let .image(image, version):
-                        doc = ImageDocument(url: url, identity: id, title: title, image: image, diskVersion: version)
+                    if let restored = self.documents.first(where: { $0.identity == request.id }) {
+                        activate(restored)
+                        return
                     }
+                    let doc = self.makeDocument(request, content: try result.get())
                     var replacedID: String?
-                    if let preview = self.documents.firstIndex(where:{ !$0.pinned && !$0.dirty }) {
+                    if replacePreview, let preview = self.documents.firstIndex(where:{ !$0.pinned && !$0.dirty }) {
                         replacedID = self.documents[preview].identity
                         self.documents[preview] = doc
                     } else { self.documents.append(doc) }
                     activate(doc)
-                    if let replacedID { self.targets.removeValue(forKey:replacedID) }
+                    if let replacedID { self.forgetTarget(replacedID) }
                 } catch { self.alert(error.localizedDescription) }
             }
+        }
+    }
+    func makeDocument(_ request: DocumentRequest, content: OpenedContent) -> DocumentTab {
+        switch content {
+        case let .text(source, disk):
+            let text = request.change != nil && source.isEmpty ? "没有文本差异" : source
+            let editor = Editor(url: request.url, identity: request.id, title: request.title, source: text,
+                                disk: disk, change: request.change, patch: request.change != nil)
+            wire(editor)
+            return editor
+        case let .image(image, version):
+            return ImageDocument(url: request.url, identity: request.id, title: request.title, image: image, diskVersion: version)
         }
     }
     private func wire(_ doc: Editor) {
@@ -246,9 +265,13 @@ extension Workbench {
         loadVersion += 1
         removeTab(doc)
     }
+    private func forgetTarget(_ id: String) {
+        targets.removeValue(forKey: id)
+        restoringSession?.tabs.removeAll { DocumentRequest($0.target).id == id }
+    }
     private func removeTab(_ doc: DocumentTab) {
         guard let index = documents.firstIndex(where:{ $0 === doc }) else { return }
-        documents.remove(at:index); targets.removeValue(forKey:doc.identity)
+        documents.remove(at:index); forgetTarget(doc.identity)
         if activeDocument === doc { show(documents.isEmpty ? nil : documents[min(index,documents.count-1)]) }
         else { updateTabs() }
     }

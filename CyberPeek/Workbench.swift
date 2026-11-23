@@ -48,11 +48,12 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     private let lineDiffQueue = DispatchQueue(label: "CyberPeek.gitLineDiff", qos: .utility)
     var queryJob: ShellJob?, indexJob: ShellJob?, queryVersion = 0, projectVersion = 0
     var pendingOpen: Target?
-    var queuedFiles: ArraySlice<URL> = []
+    var queuedFiles: ArraySlice<(url: URL, replacePreview: Bool)> = []
     var loadVersion = 0 { didSet { pendingOpen = nil } }
     var gitVersion = 0, diskVersion = 0
     private var toolbarDelegate: ToolbarItems!
-    enum Target { case file(URL), patch(URL,Change), blob(URL,String,String) }
+    var restoringSession: WorkspaceSession?
+    enum Target: Codable, Hashable { case file(URL), patch(URL,Change), blob(URL,String,String) }
     struct Location { let target: Target; let line: Int; let column: Int }
     var targets: [String:Target] = [:], back = [Location](), forward = [Location]()
     var welcome: NSView!
@@ -204,6 +205,7 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     func cancelWorkspaceJobs() {
         projectVersion += 1; loadVersion += 1; queryVersion += 1; diskVersion += 1; gitVersion += 1
         queuedFiles = []
+        restoringSession = nil
         monitor = nil
         queryJob?.cancel(); indexJob?.cancel(); gitJob?.cancel(); eventTask?.cancel(); lineJob?.cancel()
         gitJob = nil
@@ -465,9 +467,9 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     }
     func windowWillClose(_ notification: Notification) {
         if quick.isVisible { quick.dismiss() }
+        onClose?(self)
         cancelWorkspaceJobs()
         root = nil
-        onClose?(self)
     }
 }
 

@@ -213,8 +213,19 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
             return node.key
         })
     }
+    private func visibleRowOffsets(in rect: NSRect) -> [String: CGFloat] {
+        var offsets = [String: CGFloat]()
+        for row in Range(outline.rows(in: rect)) ?? 0..<0 {
+            if let node = outline.item(atRow: row) as? SideNode {
+                offsets[node.key] = outline.rect(ofRow: row).minY - rect.minY
+            }
+        }
+        return offsets
+    }
     func reload(rememberCurrent: Bool = true) {
         if rememberCurrent { remember() }
+        let viewport = outline.visibleRect
+        let offsets = rememberCurrent && section == .files ? visibleRowOffsets(in: viewport) : [:]
         let selected = outline.selectedRow >= 0 ? (outline.item(atRow: outline.selectedRow) as? SideNode)?.key : nil
         reloading = true
         switch section {
@@ -267,9 +278,19 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
         if let selected, let row = (0..<outline.numberOfRows).first(where: { (outline.item(atRow:$0) as? SideNode)?.key == selected }) {
             outline.selectRowIndexes(IndexSet(integer: row),byExtendingSelection:false)
         }
+        if !offsets.isEmpty {
+            var origin = viewport.origin
+            // Keep the first surviving visible file or folder at its previous height on screen.
+            for row in 0..<outline.numberOfRows {
+                guard let node = outline.item(atRow: row) as? SideNode, let offset = offsets[node.key] else { continue }
+                origin.y = outline.rect(ofRow: row).minY - offset
+                break
+            }
+            outline.scroll(origin)
+        }
         reloading = false
     }
-    func reveal(_ url: URL) {
+    func reveal(_ url: URL, centerSelectedRow: Bool = false) {
         guard section == .files, let top = roots.first, url.path.hasPrefix(top.key + "/") else { return }
         var node = top
         for component in url.path.dropFirst(top.key.count+1).split(separator:"/") {
@@ -278,10 +299,20 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
             node = child
         }
         let row = outline.row(forItem:node)
-        if row >= 0 {
-            outline.selectRowIndexes(IndexSet(integer:row),byExtendingSelection:false)
+        guard row >= 0 else { return }
+        if row == outline.selectedRow && !centerSelectedRow {
             outline.scrollRowToVisible(row)
+            return
         }
+        outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        guard let scroll = outline.enclosingScrollView else { return }
+        outline.layoutSubtreeIfNeeded()
+        let clip = scroll.contentView
+        var viewport = clip.bounds
+        let rowRect = clip.convert(outline.rect(ofRow: row), from: outline)
+        viewport.origin.y = rowRect.midY - viewport.height / 2
+        clip.scroll(to: clip.constrainBoundsRect(viewport).origin)
+        scroll.reflectScrolledClipView(clip)
     }
     var expandedDirectoryPaths: Set<String> {
         Set((0..<outline.numberOfRows).compactMap { row in

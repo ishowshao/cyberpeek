@@ -445,8 +445,10 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     private func openNode(_ node: SideNode, pin: Bool) {
         switch node.role {
         case let .file(url, deletion):
-            if let deletion, let git = side.git?.repository(containing: url.path) { open(.patch(git.repo,deletion),pin:pin) }
-            else { open(.file(url),pin:pin) }
+            let target: Target
+            if let deletion, let git = side.git?.repository(containing: url.path) { target = .patch(git.repo, deletion) }
+            else { target = .file(url) }
+            open(target, pin: pin, explorerReveal: .preserve)
         case let .hit(hit):
             if let root { open(.file(root.appendingPathComponent(hit.path)),line:hit.line,column:hit.column,length:hit.length,pin:pin) }
         case let .change(repo, c):

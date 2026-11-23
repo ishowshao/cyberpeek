@@ -20,6 +20,8 @@ private enum OpenedContent {
 }
 
 extension Workbench {
+    enum ExplorerReveal { case preserve, reveal, center }
+
     private var currentLocation: Location? {
         guard let doc = activeDocument, let target = targets[doc.identity] else { return nil }
         let cursor = current?.cursor ?? (line: 1, column: 1)
@@ -55,7 +57,7 @@ extension Workbench {
         }
     }
     func open(_ target: Target, line: Int? = nil, column: Int = 0, length: Int = 0, pin: Bool = false, record: Bool = true,
-              completion: (() -> Void)? = nil) {
+              explorerReveal: ExplorerReveal = .reveal, completion: (() -> Void)? = nil) {
         let id: String, url: URL, change: Change?, title: String
         switch target {
         case let .file(file):
@@ -73,7 +75,7 @@ extension Workbench {
             if pin { doc.pinned = true }
             let editor = doc as? Editor
             if line != nil { editor?.showsSVGPreview = false }
-            targets[id] = target; show(doc)
+            targets[id] = target; show(doc, explorerReveal: explorerReveal)
             if let line { editor?.go(line,column:column,length:length) }
         }
         if let old = documents.first(where:{ $0.identity == id }) {
@@ -142,7 +144,7 @@ extension Workbench {
             } else { self.open(.file(doc.url),line:line,pin:true) }
         }
     }
-    func show(_ doc: DocumentTab?) {
+    func show(_ doc: DocumentTab?, explorerReveal: ExplorerReveal = .reveal) {
         activeDocument = doc
         updateBranch()
         crumbBar.isHidden = doc == nil
@@ -173,7 +175,7 @@ extension Workbench {
         }
         updateTabs(); updateStatus()
         refreshLineChanges()
-        if let doc { side.reveal(doc.url) }
+        if let doc, explorerReveal != .preserve { side.reveal(doc.url, centerSelectedRow: explorerReveal == .center) }
     }
     var breadcrumbURL: URL? {
         guard let activeDocument else { return nil }
@@ -196,8 +198,10 @@ extension Workbench {
                 guard let self, let doc else { return }
                 self.loadVersion += 1
                 if self.activeDocument !== doc { self.rememberLocation() }
-                if NSApp.currentEvent?.clickCount == 2 { doc.pinned = true }
-                self.show(doc); self.refreshSelectedDocument()
+                if let event = NSApp.currentEvent, [.leftMouseDown, .leftMouseUp].contains(event.type), event.clickCount == 2 {
+                    doc.pinned = true
+                }
+                self.show(doc, explorerReveal: .center); self.refreshSelectedDocument()
             }
             let font = NSFont.systemFont(ofSize:12)
             button.font = doc.pinned ? font : NSFontManager.shared.convert(font,toHaveTrait:.italicFontMask)

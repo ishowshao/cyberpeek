@@ -77,6 +77,112 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(visible().map(\.name), [root.lastPathComponent])
     }
 
+    @MainActor func testTabClickCentersExplorerRowWithinScrollLimits() throws {
+        let root = try makeTestWorkspace()
+        let directory = root.appendingPathComponent("Sources", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let files = (0..<100).map { directory.appendingPathComponent("File\($0).txt") }
+        for file in files { try Data().write(to: file) }
+
+        let bench = Workbench()
+        defer { bench.cancelWorkspaceJobs(); bench.window.orderOut(nil) }
+        bench.root = root
+        bench.side.reset(root)
+        bench.window.makeKeyAndOrderFront(nil)
+        for index in [0, 50, 52, 99] {
+            let opened = expectation(description: "Open " + files[index].lastPathComponent)
+            bench.open(.file(files[index]), pin: true) { opened.fulfill() }
+            wait(for: [opened], timeout: 3)
+        }
+        bench.window.contentView?.layoutSubtreeIfNeeded()
+        let outline = try XCTUnwrap(descendants(NSOutlineView.self, of: bench.side.view).first)
+        func clickTab(_ index: Int) throws {
+            let button = try XCTUnwrap(descendants(NSButton.self, of: bench.tabs).first { $0.toolTip == files[index].path })
+            button.performClick(nil)
+            XCTAssertEqual((outline.item(atRow: outline.selectedRow) as? SideNode)?.key, files[index].path)
+        }
+
+        let folder = try XCTUnwrap(outline.parent(forItem: outline.item(atRow: outline.selectedRow)))
+        outline.collapseItem(folder)
+        try clickTab(50)
+        XCTAssertEqual(outline.rect(ofRow: outline.selectedRow).midY, outline.visibleRect.midY, accuracy: 1)
+
+        let beforeClick = outline.visibleRect.minY
+        let nearby = try XCTUnwrap((0..<outline.numberOfRows).first { (outline.item(atRow: $0) as? SideNode)?.key == files[52].path })
+        outline.selectRowIndexes(IndexSet(integer: nearby), byExtendingSelection: false)
+        outline.sendAction(outline.action, to: outline.target)
+        XCTAssertEqual(bench.activeDocument?.url, files[52])
+        XCTAssertEqual(outline.visibleRect.minY, beforeClick, accuracy: 1)
+        try clickTab(52)
+        XCTAssertEqual(outline.rect(ofRow: nearby).midY, outline.visibleRect.midY, accuracy: 1)
+
+        try clickTab(0)
+        XCTAssertEqual(outline.visibleRect.minY, outline.bounds.minY, accuracy: 1)
+        try clickTab(99)
+        XCTAssertEqual(outline.visibleRect.maxY, outline.bounds.maxY, accuracy: 1)
+    }
+
+    @MainActor func testWorkspaceRefreshKeepsManuallyScrolledExplorerPosition() throws {
+        let root = try makeTestWorkspace()
+        try ShellJob().run(Tools.git, ["init", "-q"], in: root)
+        let files = (0..<120).map { root.appendingPathComponent("File\($0).txt") }
+        for file in files { try Data().write(to: file) }
+        let bench = Workbench()
+        defer { bench.cancelWorkspaceJobs(); bench.window.orderOut(nil) }
+        bench.window.orderFront(nil)
+        bench.openFolder(root, remember: false)
+        let opened = expectation(description: "Open selected file")
+        bench.open(.file(files[4]), pin: true) { opened.fulfill() }
+        wait(for: [opened], timeout: 3)
+        bench.window.contentView?.layoutSubtreeIfNeeded()
+        let outline = try XCTUnwrap(descendants(NSOutlineView.self, of: bench.side.view).first)
+        func row(_ file: URL) -> Int? {
+            (0..<outline.numberOfRows).first { (outline.item(atRow: $0) as? SideNode)?.key == file.path }
+        }
+        func offset(_ file: URL) throws -> CGFloat {
+            outline.rect(ofRow: try XCTUnwrap(row(file))).minY - outline.visibleRect.minY
+        }
+        let anchor = files[60]
+        let anchorRow = try XCTUnwrap(row(anchor))
+        outline.scroll(NSPoint(x: 0, y: outline.rect(ofRow: anchorRow).minY + 7))
+        XCTAssertEqual(try offset(anchor), -7, accuracy: 1)
+
+        let inserted = root.appendingPathComponent("Added.txt")
+        try Data().write(to: inserted)
+        let refreshed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in row(inserted) != nil }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [refreshed], timeout: 5), .completed)
+        XCTAssertEqual(try offset(anchor), -7, accuracy: 1)
+        XCTAssertEqual((outline.item(atRow: outline.selectedRow) as? SideNode)?.key, files[4].path)
+
+        let nextOffset = try offset(files[61])
+        try FileManager.default.removeItem(at: anchor)
+        bench.side.reload()
+        XCTAssertEqual(try offset(files[61]), nextOffset, accuracy: 1)
+        bench.side.reload()
+        XCTAssertEqual(try offset(files[61]), nextOffset, accuracy: 1)
+    }
+
+    @MainActor func testExplorerFileFinishingOpenKeepsSubsequentScroll() throws {
+        let root = try makeTestWorkspace()
+        let files = (0..<100).map { root.appendingPathComponent("File\($0).txt") }
+        for file in files { try Data().write(to: file) }
+        let bench = Workbench()
+        defer { bench.cancelWorkspaceJobs(); bench.window.orderOut(nil) }
+        bench.root = root
+        bench.side.reset(root)
+        bench.window.orderFront(nil)
+        bench.window.contentView?.layoutSubtreeIfNeeded()
+        let outline = try XCTUnwrap(descendants(NSOutlineView.self, of: bench.side.view).first)
+        let row = try XCTUnwrap((0..<outline.numberOfRows).first { (outline.item(atRow: $0) as? SideNode)?.key == files[4].path })
+        outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        outline.sendAction(outline.action, to: outline.target)
+        outline.scroll(NSPoint(x: 0, y: 1000))
+        let opened = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in bench.activeDocument?.url == files[4] }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [opened], timeout: 3), .completed)
+        XCTAssertEqual(outline.visibleRect.minY, 1000, accuracy: 1)
+        XCTAssertEqual(outline.selectedRow, row)
+    }
+
     @MainActor func testExplorerShowsGitChangesAndOpensDeletedFileDiff() throws {
         let repo = try makeTestWorkspace()
         let root = repo.appendingPathComponent("src [1]", isDirectory: true)
@@ -368,7 +474,7 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(initial.root?.path, expected.path)
     }
 
-    @MainActor func testWorkspacesOwnSeparateWindowsAndReopeningRestoresExistingEditor() throws {
+    @MainActor func testWorkspacesOwnSeparateWindowsAndReopeningRestoresExistingEditor() async throws {
         let host = try XCTUnwrap(NSApp.delegate as? AppDelegate)
         let original = try XCTUnwrap(host.activeWorkbench)
         let initialCount = host.workbenches.count
@@ -381,9 +487,10 @@ final class WorkspaceTests: XCTestCase {
         let a = first.appendingPathComponent("main.txt"), b = second.appendingPathComponent("main.txt")
         try "client".write(to: a, atomically: true, encoding: .utf8)
         try "service".write(to: b, atomically: true, encoding: .utf8)
-        func waitFor(_ predicate: @escaping () -> Bool, line: UInt = #line) {
+        func waitFor(_ predicate: @escaping () -> Bool, line: UInt = #line) async {
             let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in predicate() }, object: nil)
-            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed, line: line)
+            let result = await XCTWaiter.fulfillment(of: [ready], timeout: 5)
+            XCTAssertEqual(result, .completed, line: line)
         }
         defer {
             for bench in host.workbenches where bench !== original { bench.window.close() }
@@ -395,7 +502,7 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertNil(client.root)
         client.onOpenFolder?(first)
         host.application(NSApp, open: [a])
-        waitFor { client.current?.url == a }
+        await waitFor { client.current?.url == a }
         let draft = try XCTUnwrap(client.current)
         draft.text.insertText("!", replacementRange: NSRange(location: 6, length: 0))
         draft.text.setSelectedRange(NSRange(location: 1, length: 2))
@@ -404,7 +511,7 @@ final class WorkspaceTests: XCTestCase {
         let service = try XCTUnwrap(host.activeWorkbench)
         XCTAssertFalse(client === service)
         host.application(NSApp, open: [b])
-        waitFor { service.current?.url == b }
+        await waitFor { service.current?.url == b }
         let other = try XCTUnwrap(service.current)
         other.text.insertText("?", replacementRange: NSRange(location: 7, length: 0))
         host.save()
@@ -412,10 +519,20 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: a, encoding: .utf8), "client")
         XCTAssertTrue(draft.dirty)
 
+        // A hosted test can order its windows while its title-bar controls are still inactive.
+        if !NSApp.isActive {
+            _ = try await NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: .init())
+        }
+        client.window.makeKeyAndOrderFront(nil)
+        await waitFor {
+            client.window.isKeyWindow && client.window.standardWindowButton(.miniaturizeButton)?.isEnabled == true
+        }
+        let minimized = expectation(forNotification: NSWindow.didMiniaturizeNotification, object: client.window)
         client.window.miniaturize(nil)
-        waitFor { client.window.isMiniaturized }
+        await fulfillment(of: [minimized], timeout: 5)
+        XCTAssertTrue(client.window.isMiniaturized)
         service.onOpenFolder?(alias)
-        waitFor { !client.window.isMiniaturized && client.window.isVisible && host.activeWorkbench === client }
+        await waitFor { !client.window.isMiniaturized && client.window.isVisible && host.activeWorkbench === client }
         host.application(NSApp, open: [first, alias])
         XCTAssertEqual(host.workbenches.count, initialCount + 2)
         XCTAssertTrue(host.activeWorkbench === client && client.current === draft && client.monitor === monitor)

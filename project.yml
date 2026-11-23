@@ -15,8 +15,8 @@ targets:
       path: CyberPeek/Info.plist
       properties:
         CFBundleIconFile: CyberPeek.icns
-        CFBundleShortVersionString: "0.1.1"
-        CFBundleVersion: "2"
+        CFBundleShortVersionString: "0.1.2"
+        CFBundleVersion: "3"
         CFBundleDocumentTypes:
           - CFBundleTypeName: Source files and folders
             CFBundleTypeRole: Editor

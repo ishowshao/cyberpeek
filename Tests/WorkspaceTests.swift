@@ -153,6 +153,8 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [refreshed], timeout: 5), .completed)
         XCTAssertEqual(try offset(anchor), -7, accuracy: 1)
         XCTAssertEqual((outline.item(atRow: outline.selectedRow) as? SideNode)?.key, files[4].path)
+        let scroller = try XCTUnwrap(outline.enclosingScrollView?.verticalScroller)
+        XCTAssertEqual(scroller.doubleValue, outline.visibleRect.minY / (outline.bounds.height - outline.visibleRect.height), accuracy: 0.001)
 
         let nextOffset = try offset(files[61])
         try FileManager.default.removeItem(at: anchor)
@@ -160,6 +162,72 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(try offset(files[61]), nextOffset, accuracy: 1)
         bench.side.reload()
         XCTAssertEqual(try offset(files[61]), nextOffset, accuracy: 1)
+    }
+
+    @MainActor func testExplorerRefreshPreservesUnchangedRowsAndUpdatesBadges() throws {
+        let root = try makeTestWorkspace()
+        let module = root.appendingPathComponent("Module", isDirectory: true)
+        let folder = module.appendingPathComponent("Sources", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appendingPathComponent("main.swift")
+        let keep = root.appendingPathComponent("keep.txt")
+        for url in [file, keep] { try Data().write(to: url) }
+        try ShellJob().run(Tools.git, ["init", "-q"], in: root)
+        let bench = Workbench()
+        defer { bench.window.orderOut(nil) }
+        bench.side.reset(root)
+        bench.window.orderFront(nil)
+        bench.side.reveal(file)
+        bench.window.contentView?.layoutSubtreeIfNeeded()
+        let outline = try XCTUnwrap(descendants(NSOutlineView.self, of: bench.side.view).first)
+        func row(_ url: URL) throws -> Int {
+            try XCTUnwrap((0..<outline.numberOfRows).first { (outline.item(atRow: $0) as? SideNode)?.key == url.path })
+        }
+        func cell(_ url: URL) throws -> NSView {
+            try XCTUnwrap(outline.view(atColumn: 0, row: try row(url), makeIfNecessary: true))
+        }
+        func refresh() throws {
+            bench.side.git = try WorkspaceGit.read(in: root, previous: nil, changedPaths: nil, directories: [folder.path], job: ShellJob())
+            bench.side.reload()
+        }
+        try refresh()
+        let untouched = try cell(keep), original = try cell(file)
+        let directory = try XCTUnwrap(outline.item(atRow: try row(folder)) as? SideNode)
+        XCTAssertEqual(descendants(NSTextField.self, of: original).last?.stringValue, "U")
+        try refresh()
+        XCTAssertTrue(try cell(file) === original)
+        XCTAssertTrue(try cell(keep) === untouched)
+
+        try ShellJob().run(Tools.git, ["add", "Module/Sources/main.swift"], in: root)
+        try refresh()
+        XCTAssertEqual(descendants(NSTextField.self, of: try cell(file)).last?.stringValue, "A")
+        XCTAssertTrue(try cell(keep) === untouched)
+        XCTAssertTrue(outline.isItemExpanded(directory))
+
+        let added = folder.appendingPathComponent("another.swift")
+        try Data().write(to: added)
+        try refresh()
+        XCTAssertEqual(try row(added) + 1, try row(file))
+        XCTAssertTrue(try cell(keep) === untouched)
+        XCTAssertEqual(outline.selectedRow, try row(file))
+
+        let parent = try XCTUnwrap(outline.item(atRow: try row(module)))
+        outline.collapseItem(parent)
+        try FileManager.default.removeItem(at: added)
+        try refresh()
+        outline.expandItem(parent)
+        outline.expandItem(directory)
+        XCTAssertEqual(try row(folder) + 1, try row(file))
+        XCTAssertEqual(try row(file) + 1, try row(keep))
+
+        try FileManager.default.removeItem(at: file)
+        try refresh()
+        let deleted = try XCTUnwrap(outline.item(atRow: try row(file)) as? SideNode)
+        guard case let .file(_, deletion) = deleted.role else { return XCTFail("Expected a deleted file") }
+        XCTAssertEqual(deletion?.flag, "D")
+        try ShellJob().run(Tools.git, ["rm", "--cached", "-f", "--", "Module/Sources/main.swift"], in: root)
+        try refresh()
+        XCTAssertEqual(try row(folder) + 1, try row(keep))
     }
 
     @MainActor func testExplorerFileFinishingOpenKeepsSubsequentScroll() throws {
@@ -181,6 +249,26 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [opened], timeout: 3), .completed)
         XCTAssertEqual(outline.visibleRect.minY, 1000, accuracy: 1)
         XCTAssertEqual(outline.selectedRow, row)
+    }
+
+    @MainActor func testUntrackedFolderExpandedDuringInitialRefreshGetsFileBadges() throws {
+        let root = try makeTestWorkspace()
+        try ShellJob().run(Tools.git, ["init", "-q"], in: root)
+        let folder = root.appendingPathComponent("Sources", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appendingPathComponent("main.swift")
+        try Data().write(to: file)
+        let bench = Workbench()
+        defer { bench.cancelWorkspaceJobs(); bench.window.orderOut(nil) }
+        bench.window.orderFront(nil)
+        bench.openFolder(root, remember: false)
+        bench.side.reveal(file)
+        let outline = try XCTUnwrap(descendants(NSOutlineView.self, of: bench.side.view).first)
+        let decorated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard let cell = outline.view(atColumn: 0, row: outline.selectedRow, makeIfNecessary: true) else { return false }
+            return self.descendants(NSTextField.self, of: cell).map(\.stringValue) == ["main.swift", "U"]
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [decorated], timeout: 5), .completed)
     }
 
     @MainActor func testExplorerShowsGitChangesAndOpensDeletedFileDiff() throws {

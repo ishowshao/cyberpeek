@@ -316,6 +316,9 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
                     self.fullGitRefreshQueued = false
                     self.queuedGitPaths.removeAll()
                     self.refreshGit(changedPaths: next)
+                } else if self.side.section == .files, self.side.git?.fileTree.untrackedRoots.isEmpty == false {
+                    // A folder may have been expanded after this job captured its directory list.
+                    self.requestGitDetails()
                 }
             }
         }

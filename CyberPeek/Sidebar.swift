@@ -8,7 +8,7 @@ final class SideNode {
         case untrackedDirectory(URL, URL), changeRange(URL, [Change], Range<Int>, Bool)
     }
     let name: String, key: String
-    let role: Role
+    fileprivate(set) var role: Role
     var children: [SideNode]?
     init(_ name: String, _ key: String, _ role: Role, children: [SideNode]? = nil) {
         self.name = name; self.key = key; self.role = role; self.children = children
@@ -32,6 +32,11 @@ final class SideNode {
         default: break
         }
         guard case let .directory(url) = role else { return [] }
+        let nodes = Self.directoryItems(at: url, tree: tree)
+        children = nodes
+        return nodes
+    }
+    fileprivate static func directoryItems(at url: URL, tree: GitFileTree?) -> [SideNode] {
         let keys: Set<URLResourceKey> = [.isDirectoryKey,.isSymbolicLinkKey]
         let urls = (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: Array(keys))) ?? []
         let hidden: Set<String> = [".git",".DS_Store",".vendor",".build","DerivedData"]
@@ -53,7 +58,6 @@ final class SideNode {
             }
         }
         nodes.sort { $0.expandable == $1.expandable ? $0.name.localizedStandardCompare($1.name) == .orderedAscending : $0.expandable }
-        children = nodes
         return nodes
     }
 
@@ -83,10 +87,32 @@ final class SideNode {
     }
 }
 
+private extension NSClipView {
+    // Adjust the viewport during layout without showing AppKit's user-scroll indicator.
+    func restoreOrigin(_ origin: NSPoint) {
+        var target = bounds
+        target.origin = origin
+        let constrained = constrainBoundsRect(target).origin
+        if constrained != bounds.origin { setBoundsOrigin(constrained) }
+    }
+}
+
 private final class FileOutline: NSOutlineView {
     var activateSelection: (() -> Void)?
     var onCopyRelativePath: ((URL) -> Void)?
     var onTrashFile: ((URL) -> Void)?
+    var preservingViewport = false
+
+    override func setFrameSize(_ newSize: NSSize) {
+        if preservingViewport, newSize.height < frame.height, let clip = enclosingScrollView?.contentView {
+            // Clamp before AppKit scrolls a viewport that extended past the new last row.
+            let lastOrigin = frame.minY + newSize.height - clip.bounds.height
+            if clip.bounds.minY > lastOrigin {
+                clip.restoreOrigin(NSPoint(x: clip.bounds.minX, y: lastOrigin))
+            }
+        }
+        super.setFrameSize(newSize)
+    }
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let row = row(at: convert(event.locationInWindow, from: nil))
@@ -124,6 +150,34 @@ private final class FileOutline: NSOutlineView {
     }
 }
 
+private struct FileBadge: Equatable {
+    let text: String
+    let fontSize: CGFloat
+    let color: NSColor
+    let toolTip: String
+
+    init?(_ node: SideNode, in tree: GitFileTree?) {
+        guard let tree else { return nil }
+        if let changes = tree.changes[node.key], let last = changes.last {
+            text = changes.map(\.flag).joined()
+            fontSize = 10
+            toolTip = ([node.name] + changes.map { "\($0.area.rawValue) \($0.flag)" }).joined(separator: " · ")
+            switch last.flag {
+            case "A": color = Palette.green
+            case "U": color = last.area == .untracked ? Palette.green : Palette.red
+            case "D": color = Palette.red
+            default: color = Palette.blue
+            }
+        } else {
+            guard tree.changedDirectories.contains(node.key) else { return nil }
+            text = "•"
+            fontSize = 15 // The system font's bullet is 3 points across at this size.
+            color = Palette.blue
+            toolTip = "\(node.name) · 包含 Git 变更"
+        }
+    }
+}
+
 final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, NSSearchFieldDelegate {
     let view = NSView(), query = NSSearchField()
     private let outline = FileOutline()
@@ -147,6 +201,7 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
     var hits: [SearchHit] = []
     var searchInfo = ""
     private var roots: [SideNode] = []
+    private var displayedFileTree: GitFileTree?
     private var states: [Section: Set<String>] = [:]
     private var gitExpansion = [String: Bool]()
     private var reloading = false
@@ -223,9 +278,13 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
         return offsets
     }
     func reload(rememberCurrent: Bool = true) {
+        let previous = displayedFileTree
+        displayedFileTree = section == .files ? git?.fileTree : nil
+        if rememberCurrent, section == .files {
+            refreshFiles(previous: previous)
+            return
+        }
         if rememberCurrent { remember() }
-        let viewport = outline.visibleRect
-        let offsets = rememberCurrent && section == .files ? visibleRowOffsets(in: viewport) : [:]
         let selected = outline.selectedRow >= 0 ? (outline.item(atRow: outline.selectedRow) as? SideNode)?.key : nil
         reloading = true
         switch section {
@@ -278,6 +337,75 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
         if let selected, let row = (0..<outline.numberOfRows).first(where: { (outline.item(atRow:$0) as? SideNode)?.key == selected }) {
             outline.selectRowIndexes(IndexSet(integer: row),byExtendingSelection:false)
         }
+        reloading = false
+    }
+
+    private func refreshFiles(previous: GitFileTree?) {
+        guard let root = roots.first else { return }
+        let tree = displayedFileTree
+        var edits = [DirectoryEdit]()
+        collectEdits(in: root, tree: tree, edits: &edits)
+        if !edits.isEmpty { applyFileEdits(edits) }
+
+        var rows = IndexSet()
+        outline.enumerateAvailableRowViews { _, row in
+            if row >= 0, let node = self.outline.item(atRow: row) as? SideNode,
+               FileBadge(node, in: previous) != FileBadge(node, in: tree) { rows.insert(row) }
+        }
+        if !rows.isEmpty { outline.reloadData(forRowIndexes: rows, columnIndexes: IndexSet(integer: 0)) }
+    }
+
+    private struct DirectoryEdit {
+        let parent: SideNode
+        let children: [SideNode]
+        let removed: IndexSet
+        let inserted: IndexSet
+    }
+
+    private func collectEdits(in parent: SideNode, tree: GitFileTree?, edits: inout [DirectoryEdit]) {
+        guard case let .directory(url) = parent.role, let old = parent.children else { return }
+        let byPath = Dictionary(uniqueKeysWithValues: old.map { ($0.key, $0) })
+        let children = SideNode.directoryItems(at: url, tree: tree).map { candidate in
+            guard let existing = byPath[candidate.key], existing.expandable == candidate.expandable else { return candidate }
+            existing.role = candidate.role
+            return existing
+        }
+        if !old.elementsEqual(children, by: { $0 === $1 }) {
+            let difference = children.map(ObjectIdentifier.init).difference(from: old.map(ObjectIdentifier.init))
+            var removed = IndexSet(), inserted = IndexSet()
+            for change in difference {
+                switch change {
+                case let .remove(index, _, _): removed.insert(index)
+                case let .insert(index, _, _): inserted.insert(index)
+                }
+            }
+            edits.append(DirectoryEdit(parent: parent, children: children, removed: removed, inserted: inserted))
+        }
+        for child in children where child.children != nil { collectEdits(in: child, tree: tree, edits: &edits) }
+    }
+
+    private func applyFileEdits(_ edits: [DirectoryEdit]) {
+        outline.preservingViewport = true
+        defer { outline.preservingViewport = false }
+        let visibleEdits = edits.filter { outline.isItemExpanded($0.parent) }
+        let viewport = outline.visibleRect
+        let offsets = visibleEdits.isEmpty ? [:] : visibleRowOffsets(in: viewport)
+        let selected = (outline.item(atRow: outline.selectedRow) as? SideNode)?.key
+        if !visibleEdits.isEmpty { outline.beginUpdates() }
+        for edit in edits { edit.parent.children = edit.children }
+        guard !visibleEdits.isEmpty else { return }
+        for edit in visibleEdits {
+            if !edit.removed.isEmpty { outline.removeItems(at: edit.removed, inParent: edit.parent, withAnimation: []) }
+            if !edit.inserted.isEmpty { outline.insertItems(at: edit.inserted, inParent: edit.parent, withAnimation: []) }
+        }
+        outline.endUpdates()
+        if let selected, (outline.item(atRow: outline.selectedRow) as? SideNode)?.key != selected {
+            if let row = (0..<outline.numberOfRows).first(where: { (outline.item(atRow: $0) as? SideNode)?.key == selected }) {
+                outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+            } else {
+                outline.deselectAll(nil)
+            }
+        }
         if !offsets.isEmpty {
             var origin = viewport.origin
             // Keep the first surviving visible file or folder at its previous height on screen.
@@ -286,9 +414,10 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
                 origin.y = outline.rect(ofRow: row).minY - offset
                 break
             }
-            outline.scroll(origin)
+            if let clip = outline.enclosingScrollView?.contentView {
+                clip.restoreOrigin(clip.convert(origin, from: outline))
+            }
         }
-        reloading = false
     }
     func reveal(_ url: URL, centerSelectedRow: Bool = false) {
         guard section == .files, let top = roots.first, url.path.hasPrefix(top.key + "/") else { return }
@@ -370,23 +499,10 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
         switch node.role {
         case .directory, .file:
             let icon = node.expandable ? ("folder", Palette.muted) : kindIcon(node.name)
-            let changes = git?.fileTree.changes[node.key] ?? []
-            if let change = changes.last {
-                let flags = changes.map(\.flag).joined()
-                let color: NSColor
-                switch change.flag {
-                case "A": color = Palette.green
-                case "U": color = change.area == .untracked ? Palette.green : Palette.red
-                case "D": color = Palette.red
-                default: color = Palette.blue
-                }
-                let row = rowView(node.name, icon: icon.0, color: icon.1, detail: flags, detailColor: color)
-                row.toolTip = ([node.name] + changes.map { "\($0.area.rawValue) \($0.flag)" }).joined(separator: " · ")
-                return row
-            }
-            let changed = git?.fileTree.changedDirectories.contains(node.key) == true
-            let row = rowView(node.name, icon: icon.0, color: icon.1, detail: changed ? "•" : nil, detailColor: Palette.blue)
-            if changed { row.toolTip = "\(node.name) · 包含 Git 变更" }
+            let badge = FileBadge(node, in: git?.fileTree)
+            let row = rowView(node.name, icon: icon.0, color: icon.1, detail: badge?.text,
+                              detailColor: badge?.color, detailSize: badge?.fontSize ?? 10)
+            row.toolTip = badge?.toolTip ?? node.name
             return row
         case let .repository(branch): return rowView(node.name, icon: "folder", detail: branch, truncatesDetail: true)
         case .untrackedDirectory: return rowView(node.name, icon: "folder", detail: "U", detailColor: Palette.green)

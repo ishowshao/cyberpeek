@@ -112,7 +112,7 @@ func configureTable(_ table: NSTableView) {
     table.intercellSpacing = .zero
 }
 func rowView(_ text: String, icon: String? = nil, color: NSColor = Palette.muted, detail: String? = nil,
-             detailColor: NSColor? = nil, heading: Bool = false, truncatesDetail: Bool = false) -> NSView {
+             detailColor: NSColor? = nil, detailSize: CGFloat = 10, heading: Bool = false, truncatesDetail: Bool = false) -> NSView {
     var views = [NSView]()
     if let icon {
         let image = NSImageView(image: symbol(icon, size: 13) ?? NSImage())
@@ -122,7 +122,7 @@ func rowView(_ text: String, icon: String? = nil, color: NSColor = Palette.muted
     views.append(title)
     let s = stack(views, spacing: 7)
     if let detail {
-        let badge = label(detail, 10, color: detailColor ?? color)
+        let badge = label(detail, detailSize, color: detailColor ?? color)
         s.addView(badge, in: detailColor == nil ? .leading : .trailing)
         if truncatesDetail {
             badge.widthAnchor.constraint(lessThanOrEqualTo: s.widthAnchor, multiplier: 0.5).isActive = true

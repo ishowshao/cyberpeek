@@ -81,10 +81,11 @@ final class ShellJob {
 enum Tools {
     static let git = URL(fileURLWithPath: "/usr/bin/git")
     static var rg: URL { Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/rg") }
-    static let searchFlags = ["--no-config", "--hidden", "-g", "!.git", "-g", "!.vendor", "-g", "!.build", "-g", "!DerivedData"]
+    static let searchExclusions = [".git", ".vendor", ".build", "DerivedData"]
+    static let searchFlags = ["--no-config", "--hidden"] + searchExclusions.flatMap { ["-g", "!" + $0] }
 }
 
-struct SearchHit {
+struct SearchHit: Hashable {
     let path: String
     let line: Int
     let excerpt: String
@@ -93,6 +94,17 @@ struct SearchHit {
 }
 
 enum WorkspaceSearch {
+    static func mayAffectResults(_ path: String, in root: URL) -> Bool {
+        let prefix = root.path == "/" ? "/" : root.path + "/"
+        guard path.hasPrefix(prefix) else { return true }
+        let parts = path.dropFirst(prefix.count).split(separator: "/")
+        for (index, part) in parts.enumerated() where Tools.searchExclusions.contains(String(part)) {
+            // Git's local ignore rules affect searches even though .git itself is excluded.
+            let suffix = parts.dropFirst(index + 1)
+            return part == ".git" && (suffix.elementsEqual(["info"]) || suffix.elementsEqual(["info", "exclude"]))
+        }
+        return true
+    }
     static func paths(in root: URL, job: ShellJob) throws -> [String] {
         var paths = [String](), pending = Data()
         try job.run(Tools.rg, Tools.searchFlags + ["--files", "--null"], in: root, success: [0,1]) { chunk in
@@ -116,7 +128,8 @@ enum WorkspaceSearch {
         var pending = Data(), hits = [SearchHit](), total = 0
         var lastDelivery = Date.distantPast
         defer { if !hits.isEmpty { deliver(hits) } }
-        try job.run(Tools.rg, Tools.searchFlags + ["--json", "--smart-case", "--fixed-strings", "-e", query, "."],
+        // The first 1,200 hits must be repeatable when only unrelated files changed.
+        try job.run(Tools.rg, Tools.searchFlags + ["--sort", "path", "--json", "--smart-case", "--fixed-strings", "-e", query, "."],
                     in: root, success: [0,1]) { chunk in
             pending.append(chunk)
             while let end = pending.firstIndex(of: 10) {

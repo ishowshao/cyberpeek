@@ -13,6 +13,10 @@ final class SideNode {
     init(_ name: String, _ key: String, _ role: Role, children: [SideNode]? = nil) {
         self.name = name; self.key = key; self.role = role; self.children = children
     }
+    static func searchHit(_ hit: SearchHit) -> SideNode {
+        SideNode("\(hit.line)   \(hit.excerpt)", "\(hit.path):\(hit.line):\(hit.column)", .hit(hit))
+    }
+
     var expandable: Bool {
         switch role { case .directory,.untrackedDirectory,.changeRange,.group,.repository,.commit: return true; default: return false }
     }
@@ -199,7 +203,9 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
     var git: WorkspaceGit?
     var gitMessage = "正在读取仓库…"
     var hits: [SearchHit] = []
-    var searchInfo = ""
+    var searchInfo = "" {
+        didSet { if section == .search && oldValue != searchInfo { count.stringValue = searchInfo } }
+    }
     private var roots: [SideNode] = []
     private var displayedFileTree: GitFileTree?
     private var states: [Section: Set<String>] = [:]
@@ -284,6 +290,10 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
             refreshFiles(previous: previous)
             return
         }
+        if rememberCurrent, section == .search {
+            refreshSearchResults()
+            return
+        }
         if rememberCurrent { remember() }
         let selected = outline.selectedRow >= 0 ? (outline.item(atRow: outline.selectedRow) as? SideNode)?.key : nil
         reloading = true
@@ -311,7 +321,7 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
         case .search:
             let groups = Dictionary(grouping: hits, by: \.path)
             roots = groups.keys.sorted().map { path in
-                SideNode(path,path,.group,children:groups[path]!.map { SideNode("\($0.line)   \($0.excerpt)","\(path):\($0.line):\($0.column)",.hit($0)) })
+                SideNode(path,path,.group,children: groups[path]!.map(SideNode.searchHit))
             }
             count.stringValue = searchInfo
         }
@@ -340,12 +350,37 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
         reloading = false
     }
 
+    private func refreshSearchResults() {
+        let groups = Dictionary(grouping: hits, by: \.path)
+        let byPath = Dictionary(uniqueKeysWithValues: roots.map { ($0.key, $0) })
+        var edits = [OutlineEdit](), newGroups = [SideNode]()
+        let updated = groups.keys.sorted().map { path -> SideNode in
+            let matches = groups[path]!
+            guard let group = byPath[path] else {
+                let node = SideNode(path, path, .group, children: matches.map(SideNode.searchHit))
+                newGroups.append(node)
+                return node
+            }
+            let old = group.children ?? []
+            var byHit = [SearchHit: SideNode]()
+            for node in old {
+                if case let .hit(hit) = node.role { byHit[hit] = node }
+            }
+            let children = matches.map { byHit[$0] ?? SideNode.searchHit($0) }
+            if let edit = OutlineEdit(group, from: old, to: children) { edits.append(edit) }
+            return group
+        }
+        if let edit = OutlineEdit(nil, from: roots, to: updated) { edits.insert(edit, at: 0) }
+        previousSearchGroups = Set(groups.keys)
+        if !edits.isEmpty { applyEdits(edits, expanding: newGroups) }
+    }
+
     private func refreshFiles(previous: GitFileTree?) {
         guard let root = roots.first else { return }
         let tree = displayedFileTree
-        var edits = [DirectoryEdit]()
+        var edits = [OutlineEdit]()
         collectEdits(in: root, tree: tree, edits: &edits)
-        if !edits.isEmpty { applyFileEdits(edits) }
+        if !edits.isEmpty { applyEdits(edits) }
 
         var rows = IndexSet()
         outline.enumerateAvailableRowViews { _, row in
@@ -355,14 +390,25 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
         if !rows.isEmpty { outline.reloadData(forRowIndexes: rows, columnIndexes: IndexSet(integer: 0)) }
     }
 
-    private struct DirectoryEdit {
-        let parent: SideNode
+    private struct OutlineEdit {
+        let parent: SideNode?
         let children: [SideNode]
-        let removed: IndexSet
-        let inserted: IndexSet
+        var removed = IndexSet(), inserted = IndexSet()
+
+        init?(_ parent: SideNode?, from old: [SideNode], to children: [SideNode]) {
+            guard !old.elementsEqual(children, by: { $0 === $1 }) else { return nil }
+            self.parent = parent
+            self.children = children
+            for change in children.map(ObjectIdentifier.init).difference(from: old.map(ObjectIdentifier.init)) {
+                switch change {
+                case let .remove(index, _, _): removed.insert(index)
+                case let .insert(index, _, _): inserted.insert(index)
+                }
+            }
+        }
     }
 
-    private func collectEdits(in parent: SideNode, tree: GitFileTree?, edits: inout [DirectoryEdit]) {
+    private func collectEdits(in parent: SideNode, tree: GitFileTree?, edits: inout [OutlineEdit]) {
         guard case let .directory(url) = parent.role, let old = parent.children else { return }
         let byPath = Dictionary(uniqueKeysWithValues: old.map { ($0.key, $0) })
         let children = SideNode.directoryItems(at: url, tree: tree).map { candidate in
@@ -370,35 +416,29 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
             existing.role = candidate.role
             return existing
         }
-        if !old.elementsEqual(children, by: { $0 === $1 }) {
-            let difference = children.map(ObjectIdentifier.init).difference(from: old.map(ObjectIdentifier.init))
-            var removed = IndexSet(), inserted = IndexSet()
-            for change in difference {
-                switch change {
-                case let .remove(index, _, _): removed.insert(index)
-                case let .insert(index, _, _): inserted.insert(index)
-                }
-            }
-            edits.append(DirectoryEdit(parent: parent, children: children, removed: removed, inserted: inserted))
-        }
+        if let edit = OutlineEdit(parent, from: old, to: children) { edits.append(edit) }
         for child in children where child.children != nil { collectEdits(in: child, tree: tree, edits: &edits) }
     }
 
-    private func applyFileEdits(_ edits: [DirectoryEdit]) {
+    private func applyEdits(_ edits: [OutlineEdit], expanding newGroups: [SideNode] = []) {
         outline.preservingViewport = true
         defer { outline.preservingViewport = false }
-        let visibleEdits = edits.filter { outline.isItemExpanded($0.parent) }
+        let visibleEdits = edits.filter { $0.parent == nil || outline.isItemExpanded($0.parent) }
         let viewport = outline.visibleRect
         let offsets = visibleEdits.isEmpty ? [:] : visibleRowOffsets(in: viewport)
         let selected = (outline.item(atRow: outline.selectedRow) as? SideNode)?.key
         if !visibleEdits.isEmpty { outline.beginUpdates() }
-        for edit in edits { edit.parent.children = edit.children }
+        for edit in edits {
+            if let parent = edit.parent { parent.children = edit.children }
+            else { roots = edit.children }
+        }
         guard !visibleEdits.isEmpty else { return }
         for edit in visibleEdits {
             if !edit.removed.isEmpty { outline.removeItems(at: edit.removed, inParent: edit.parent, withAnimation: []) }
             if !edit.inserted.isEmpty { outline.insertItems(at: edit.inserted, inParent: edit.parent, withAnimation: []) }
         }
         outline.endUpdates()
+        for group in newGroups { outline.expandItem(group) }
         if let selected, (outline.item(atRow: outline.selectedRow) as? SideNode)?.key != selected {
             if let row = (0..<outline.numberOfRows).first(where: { (outline.item(atRow: $0) as? SideNode)?.key == selected }) {
                 outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
@@ -408,7 +448,7 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
         }
         if !offsets.isEmpty {
             var origin = viewport.origin
-            // Keep the first surviving visible file or folder at its previous height on screen.
+            // Keep the first surviving visible row at its previous height on screen.
             for row in 0..<outline.numberOfRows {
                 guard let node = outline.item(atRow: row) as? SideNode, let offset = offsets[node.key] else { continue }
                 origin.y = outline.rect(ofRow: row).minY - offset

@@ -47,6 +47,7 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     private var lineBaseline: GitLineBaseline?
     private let lineDiffQueue = DispatchQueue(label: "CyberPeek.gitLineDiff", qos: .utility)
     var queryJob: ShellJob?, indexJob: ShellJob?, queryVersion = 0, projectVersion = 0
+    private var searchRefreshPending = false
     var pendingOpen: Target?
     var queuedFiles: ArraySlice<(url: URL, replacePreview: Bool)> = []
     var loadVersion = 0 { didSet { pendingOpen = nil } }
@@ -208,6 +209,7 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         restoringSession = nil
         monitor = nil
         queryJob?.cancel(); indexJob?.cancel(); gitJob?.cancel(); eventTask?.cancel(); lineJob?.cancel()
+        searchRefreshPending = false
         gitJob = nil
         indexJob = nil
         indexDirty = true
@@ -249,7 +251,11 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         indexDirty = true
         indexIfNeeded()
         refreshGit(changedPaths: changedPaths)
-        if !side.query.stringValue.isEmpty { search(side.query.stringValue) }
+        if let root, !side.query.stringValue.isEmpty,
+           changedPaths?.contains(where: { WorkspaceSearch.mayAffectResults($0, in: root) }) != false {
+            if queryJob != nil { searchRefreshPending = true }
+            else { search(side.query.stringValue, keepingResults: true) }
+        }
         checkDisk()
     }
     private func indexIfNeeded() {
@@ -406,17 +412,22 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
             }
         }
     }
-    func search(_ query: String) {
-        queryJob?.cancel(); queryVersion += 1
+    func search(_ query: String, keepingResults: Bool = false) {
+        queryJob?.cancel(); queryJob = nil; queryVersion += 1
+        searchRefreshPending = false
         let version = queryVersion
-        side.hits = []; side.searchInfo = query.isEmpty ? "" : "搜索中…"
-        if side.section == .search { side.reload() }
+        if !keepingResults {
+            side.hits = []; side.searchInfo = query.isEmpty ? "" : "搜索中…"
+            if side.section == .search { side.reload() }
+        }
         guard !query.isEmpty, let root else { return }
         let job = ShellJob(); queryJob = job
         DispatchQueue.global(qos:.userInitiated).asyncAfter(deadline:.now()+0.14) {
             var errorText: String?
+            var refreshed: [SearchHit] = []
             do {
                 try WorkspaceSearch.find(query,in:root,job:job) { hits in
+                    if keepingResults { refreshed += hits; return }
                     DispatchQueue.main.async {
                         guard self.queryVersion == version else { return }
                         self.side.hits += hits
@@ -425,11 +436,17 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
                 }
             } catch is CancellationError {} catch { errorText = error.localizedDescription }
             let problem = errorText
+            let replacement = keepingResults && problem == nil ? refreshed : nil
             DispatchQueue.main.async {
                 guard self.queryVersion == version else { return }
+                self.queryJob = nil
+                if let replacement, self.side.hits != replacement {
+                    self.side.hits = replacement
+                    if self.side.section == .search { self.side.reload() }
+                }
                 let n = self.side.hits.count
                 self.side.searchInfo = problem ?? (n == 1200 ? "已显示前 1200 个匹配" : "\(n) 个匹配")
-                if self.side.section == .search { self.side.reload() }
+                if self.searchRefreshPending { self.search(query, keepingResults: true) }
             }
         }
     }

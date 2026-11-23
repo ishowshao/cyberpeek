@@ -13,6 +13,68 @@ extension XCTestCase {
 }
 
 final class WorkspaceTests: XCTestCase {
+    @MainActor func testWorkspaceRefreshKeepsSearchRowsUntilMatchesChange() throws {
+        let root = try makeTestWorkspace()
+        let first = root.appendingPathComponent("a.txt"), second = root.appendingPathComponent("b.txt")
+        try "needle".write(to: first, atomically: true, encoding: .utf8)
+        try "other".write(to: second, atomically: true, encoding: .utf8)
+        let bench = Workbench()
+        defer { bench.cancelWorkspaceJobs(); bench.window.orderOut(nil) }
+        bench.openFolder(root, remember: false)
+        bench.monitor = nil // Deliver file events at known points in the search.
+        bench.selectSection(.search)
+        bench.side.query.stringValue = "needle"
+        bench.search("needle")
+        func waitFor(_ predicate: @escaping () -> Bool, line: UInt = #line) {
+            let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in predicate() }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed, line: line)
+        }
+        waitFor { bench.side.searchInfo == "1 个匹配" }
+        let outline = try XCTUnwrap(descendants(NSOutlineView.self, of: bench.side.view).first)
+        let group = try XCTUnwrap(outline.item(atRow: 0) as? SideNode)
+        outline.collapseItem(group)
+        outline.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        let originalVersion = bench.queryVersion
+
+        bench.refresh(changedPaths: [root.appendingPathComponent("project/.build/output").path])
+        XCTAssertEqual(bench.queryVersion, originalVersion)
+        XCTAssertEqual(bench.side.hits.count, 1)
+        bench.refresh(changedPaths: [second.path])
+        let inFlight = bench.queryJob
+        bench.refresh(changedPaths: [second.path])
+        XCTAssertTrue(bench.queryJob === inFlight)
+        XCTAssertEqual(bench.side.searchInfo, "1 个匹配")
+        XCTAssertTrue(outline.item(atRow: 0) as? SideNode === group)
+        waitFor { bench.queryJob == nil }
+        XCTAssertEqual(bench.queryVersion, originalVersion + 2)
+        XCTAssertTrue(outline.item(atRow: outline.selectedRow) as? SideNode === group)
+        XCTAssertFalse(outline.isItemExpanded(group))
+
+        try "needle".write(to: second, atomically: true, encoding: .utf8)
+        bench.refresh(changedPaths: [second.path])
+        XCTAssertEqual(bench.side.hits.map(\.path), ["a.txt"])
+        waitFor { bench.side.searchInfo == "2 个匹配" }
+        XCTAssertEqual(Set(bench.side.hits.map(\.path)), ["a.txt", "b.txt"])
+        XCTAssertTrue(outline.item(atRow: outline.selectedRow) as? SideNode === group)
+        XCTAssertFalse(outline.isItemExpanded(group))
+        let secondGroup = try XCTUnwrap(outline.item(atRow: 1) as? SideNode)
+        XCTAssertTrue(outline.isItemExpanded(secondGroup))
+        let retainedHit = try XCTUnwrap(outline.item(atRow: 2) as? SideNode)
+        try "needle\nneedle".write(to: second, atomically: true, encoding: .utf8)
+        bench.refresh(changedPaths: [second.path])
+        waitFor { bench.side.searchInfo == "3 个匹配" }
+        XCTAssertTrue(outline.item(atRow: 2) as? SideNode === retainedHit)
+        try FileManager.default.removeItem(at: first)
+        bench.refresh(changedPaths: [first.path])
+        waitFor { bench.side.hits.map(\.path) == ["b.txt", "b.txt"] }
+
+        bench.refresh(changedPaths: [second.path])
+        bench.side.query.stringValue = "absent"
+        bench.search("absent")
+        waitFor { bench.side.searchInfo == "0 个匹配" }
+        XCTAssertTrue(bench.side.hits.isEmpty)
+    }
+
     @MainActor private func descendants<T: NSView>(_ type: T.Type, of view: NSView) -> [T] {
         if let match = view as? T { return [match] }
         return view.subviews.flatMap { descendants(type, of: $0) }
@@ -25,6 +87,51 @@ final class WorkspaceTests: XCTestCase {
         let names = (0..<1000).map { "\($0) \(suffix)" }
         for name in names { try Data().write(to: root.appendingPathComponent(name)) }
         XCTAssertEqual(try WorkspaceSearch.paths(in: root, job: ShellJob()), names.sorted())
+    }
+
+    func testCappedSearchReturnsTheSameMatchesAfterUnrelatedChanges() throws {
+        let root = try makeTestWorkspace()
+        let matches = String(repeating: "needle\n", count: 50)
+        for index in (0..<30).reversed() {
+            try matches.write(to: root.appendingPathComponent(String(format: "%02d.txt", index)),
+                              atomically: true, encoding: .utf8)
+        }
+        func search() throws -> [SearchHit] {
+            var hits: [SearchHit] = []
+            do { try WorkspaceSearch.find("needle", in: root, job: ShellJob()) { hits += $0 } }
+            catch is CancellationError {} // ripgrep stops after the result limit.
+            return hits
+        }
+        let before = try search()
+        XCTAssertEqual(before.count, 1200)
+        try "other".write(to: root.appendingPathComponent("unrelated.txt"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(try search(), before)
+    }
+
+    @MainActor func testSearchResultEditsKeepVisibleHitAtSameHeight() throws {
+        let bench = Workbench()
+        defer { bench.window.orderOut(nil) }
+        bench.window.orderFront(nil)
+        bench.selectSection(.search)
+        func hit(_ file: String, _ line: Int) -> SearchHit {
+            SearchHit(path: file, line: line, excerpt: "found", column: 0, length: 5)
+        }
+        let matches = (1...100).map { hit("b.txt", $0) }
+        bench.side.hits = [hit("a.txt", 1)] + matches
+        bench.side.reload()
+        bench.window.contentView?.layoutSubtreeIfNeeded()
+        let outline = try XCTUnwrap(descendants(NSOutlineView.self, of: bench.side.view).first)
+        let anchor = try XCTUnwrap(outline.item(atRow: 60) as? SideNode)
+        outline.selectRowIndexes(IndexSet(integer: 60), byExtendingSelection: false)
+        outline.scrollRowToVisible(65)
+        let offset = outline.rect(ofRow: 60).minY - outline.visibleRect.minY
+
+        // Insert and remove both file groups and matches above the viewport.
+        bench.side.hits = [hit("0.txt", 1)] + matches.dropFirst(8) + [hit("c.txt", 1)]
+        bench.side.reload()
+        XCTAssertTrue(outline.item(atRow: outline.selectedRow) as? SideNode === anchor)
+        XCTAssertEqual(outline.rect(ofRow: outline.row(forItem: anchor)).minY - outline.visibleRect.minY, offset, accuracy: 1)
+        XCTAssertEqual(outline.numberOfRows, 97)
     }
 
     func testWideChangeListKeepsExpandedGroupWhenFilesArrive() throws {

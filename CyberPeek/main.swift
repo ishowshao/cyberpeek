@@ -162,7 +162,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         fileMenu.addItem(.separator()); item(fileMenu,"保存",#selector(save),"s",.command,self); item(fileMenu,"保存副本…",#selector(copyFile),"s",[.command,.shift],self); item(fileMenu,"关闭标签页",#selector(closeTab),"w",.command,self)
         item(fileMenu,"关闭窗口",#selector(closeWindow),"w",[.command,.shift],self)
         let edit = menu("编辑")
-        item(edit,"撤销",Selector(("undo:")),"z"); item(edit,"重做",Selector(("redo:")),"z",[.command,.shift])
+        item(edit,"撤销",#selector(SourceTextView.undo(_:)),"z"); item(edit,"重做",#selector(SourceTextView.redo(_:)),"z",[.command,.shift])
         edit.addItem(.separator()); item(edit,"剪切",#selector(NSText.cut(_:)),"x"); item(edit,"复制",#selector(NSText.copy(_:)),"c")
         item(edit,"粘贴",#selector(NSText.paste(_:)),"v"); item(edit,"全选",#selector(NSText.selectAll(_:)),"a")
         edit.addItem(.separator())

@@ -55,6 +55,17 @@ final class SourceTextView: NSTextView {
     private let localUndo = UndoManager()
     override var undoManager: UndoManager? { localUndo }
 
+    // Handle the Edit menu here so it uses this tab's history while the editor has focus.
+    @objc func undo(_ sender: Any?) { localUndo.undo() }
+    @objc func redo(_ sender: Any?) { localUndo.redo() }
+    override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem.action {
+        case #selector(undo(_:)): return localUndo.canUndo
+        case #selector(redo(_:)): return localUndo.canRedo
+        default: return super.validateMenuItem(menuItem)
+        }
+    }
+
     // Source text starts at the top-left inset. Asking AppKit for the used text
     // bounds here would lay out offscreen paragraphs just to position the first one.
     override var textContainerOrigin: NSPoint {

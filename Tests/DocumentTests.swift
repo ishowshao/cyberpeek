@@ -2,6 +2,53 @@ import XCTest
 @testable import CyberPeek
 
 final class DocumentTests: XCTestCase {
+    @MainActor func testDeleteUndoRedoUsingEditorKeyboardShortcuts() async throws {
+        let folder = try makeTestWorkspace()
+        let file = folder.appendingPathComponent("note.txt")
+        let original = "保留这一段"
+        try original.write(to: file, atomically: true, encoding: .utf8)
+        let bench = Workbench()
+        defer { bench.cancelWorkspaceJobs(); bench.window.orderOut(nil) }
+        if !NSApp.isActive {
+            _ = try await NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: .init())
+        }
+        bench.window.makeKeyAndOrderFront(nil)
+        bench.openFolder(folder, remember: false)
+        bench.open(.file(file))
+        let opened = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            bench.current?.url == file && bench.window.isKeyWindow
+        }, object: nil)
+        await fulfillment(of: [opened], timeout: 5)
+        let editor = try XCTUnwrap(bench.current)
+        XCTAssertTrue(bench.window.firstResponder === editor.text)
+
+        func press(_ code: CGKeyCode, modifiers: CGEventFlags = []) throws {
+            for down in [true, false] {
+                let event = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down))
+                event.flags = modifiers
+                NSApp.sendEvent(try XCTUnwrap(NSEvent(cgEvent: event)))
+            }
+        }
+        editor.text.setSelectedRange((original as NSString).range(of: "这一段"))
+        try press(51) // Delete
+        XCTAssertEqual(editor.text.string, "保留")
+        XCTAssertTrue(editor.dirty)
+        let editMenu = try XCTUnwrap(NSApp.mainMenu?.items.compactMap(\.submenu).first { $0.title == "编辑" })
+        editMenu.update()
+        let undo = try XCTUnwrap(editMenu.items.first { $0.action == #selector(SourceTextView.undo(_:)) })
+        let redo = try XCTUnwrap(editMenu.items.first { $0.action == #selector(SourceTextView.redo(_:)) })
+        XCTAssertTrue(undo.isEnabled)
+        XCTAssertFalse(redo.isEnabled)
+        try press(6, modifiers: .maskCommand) // ⌘Z
+        XCTAssertEqual(editor.text.string, original)
+        XCTAssertFalse(editor.dirty)
+        editMenu.update()
+        XCTAssertTrue(redo.isEnabled)
+        try press(6, modifiers: [.maskCommand, .maskShift]) // ⇧⌘Z
+        XCTAssertEqual(editor.text.string, "保留")
+        XCTAssertTrue(editor.dirty)
+    }
+
     @MainActor private func showText(_ source: String, filename: String = "sample.txt") throws -> (Editor, NSWindow) {
         let file = try makeTestWorkspace().appendingPathComponent(filename)
         let disk = try DiskText(Data(source.utf8))

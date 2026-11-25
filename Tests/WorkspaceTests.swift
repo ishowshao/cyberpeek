@@ -89,6 +89,27 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(try WorkspaceSearch.paths(in: root, job: ShellJob()), names.sorted())
     }
 
+    func testSearchAndQuickOpenSkipNodeModulesDirectoriesAtAnyDepth() throws {
+        let root = try makeTestWorkspace()
+        try ShellJob().run(Tools.git, ["init", "-q"], in: root)
+        let excluded = ["node_modules/pkg/index.js", "packages/web/node_modules/pkg/index.js"]
+        let included = ["packages/web/src/app.js", "src/node_modules", "src/node_modules_tools/index.js"]
+        for path in excluded + included {
+            let file = root.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try "needle".write(to: file, atomically: true, encoding: .utf8)
+        }
+
+        var hits = [SearchHit]()
+        try WorkspaceSearch.find("needle", in: root, job: ShellJob()) { hits += $0 }
+        XCTAssertEqual(hits.map(\.path).sorted(), included.sorted())
+        XCTAssertEqual(try WorkspaceSearch.paths(in: root, job: ShellJob()), included.sorted())
+        for path in excluded + included {
+            XCTAssertEqual(WorkspaceSearch.mayAffectResults(root.appendingPathComponent(path).path, in: root),
+                           included.contains(path), path)
+        }
+    }
+
     func testCappedSearchReturnsTheSameMatchesAfterUnrelatedChanges() throws {
         let root = try makeTestWorkspace()
         let matches = String(repeating: "needle\n", count: 50)

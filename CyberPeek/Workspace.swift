@@ -82,7 +82,8 @@ enum Tools {
     static let git = URL(fileURLWithPath: "/usr/bin/git")
     static var rg: URL { Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/rg") }
     static let searchExclusions = [".git", ".vendor", ".build", "DerivedData"]
-    static let searchFlags = ["--no-config", "--hidden"] + searchExclusions.flatMap { ["-g", "!" + $0] }
+    static let searchFlags = ["--no-config", "--hidden", "-g", "!node_modules/"]
+        + searchExclusions.flatMap { ["-g", "!" + $0] }
 }
 
 struct SearchHit: Hashable {
@@ -98,6 +99,7 @@ enum WorkspaceSearch {
         let prefix = root.path == "/" ? "/" : root.path + "/"
         guard path.hasPrefix(prefix) else { return true }
         let parts = path.dropFirst(prefix.count).split(separator: "/")
+        if parts.dropLast().contains("node_modules") { return false }
         for (index, part) in parts.enumerated() where Tools.searchExclusions.contains(String(part)) {
             // Git's local ignore rules affect searches even though .git itself is excluded.
             let suffix = parts.dropFirst(index + 1)

@@ -131,6 +131,13 @@ private final class FileOutline: NSOutlineView {
         item.target = self
         item.image = symbol("doc.on.doc", size: 13)
         item.representedObject = url
+        // Git also supplies rows for files and directories that no longer exist on disk.
+        if (try? FileManager.default.attributesOfItem(atPath: url.path)) != nil {
+            let reveal = menu.addItem(withTitle: "在 Finder 中显示", action: #selector(revealInFinder(_:)), keyEquivalent: "")
+            reveal.target = self
+            reveal.image = symbol("magnifyingglass", size: 13)
+            reveal.representedObject = url
+        }
         if case .file(_, deletion: nil) = node.role {
             menu.addItem(.separator())
             let trash = menu.addItem(withTitle: "移到废纸篓", action: #selector(trashFile(_:)), keyEquivalent: "")
@@ -143,6 +150,10 @@ private final class FileOutline: NSOutlineView {
 
     @objc private func copyPath(_ sender: NSMenuItem) {
         if let url = sender.representedObject as? URL { onCopyRelativePath?(url) }
+    }
+    @objc private func revealInFinder(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
     }
     @objc private func trashFile(_ sender: NSMenuItem) {
         if let url = sender.representedObject as? URL { onTrashFile?(url) }

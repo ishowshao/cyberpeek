@@ -473,7 +473,7 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(labels("old"), ["old"])
     }
 
-    @MainActor func testTrashMenuUsesClickedFileAndShowsTrackedDeletion() throws {
+    @MainActor func testExplorerMenuTargetsClickedItemAndUpdatesAfterTrash() throws {
         let fixture = try makeTestWorkspace()
         let repo = fixture.appendingPathComponent("project", isDirectory: true)
         try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
@@ -506,16 +506,21 @@ final class WorkspaceTests: XCTestCase {
                 timestamp: 0, windowNumber: bench.window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
             return try XCTUnwrap(outline.menu(for: event))
         }
-        XCTAssertNil(try menu(repo.lastPathComponent).item(withTitle: "移到废纸篓"))
+        let folderMenu = try menu(repo.lastPathComponent)
+        XCTAssertNil(folderMenu.item(withTitle: "移到废纸篓"))
+        XCTAssertEqual((folderMenu.item(withTitle: "在 Finder 中显示")?.representedObject as? URL)?.path, repo.path)
         XCTAssertNotEqual(try row(target.lastPathComponent), outline.selectedRow)
         let context = try menu(target.lastPathComponent)
+        XCTAssertEqual((context.item(withTitle: "在 Finder 中显示")?.representedObject as? URL)?.path, target.path)
         let trash = try XCTUnwrap(context.item(withTitle: "移到废纸篓"))
         context.performActionForItem(at: context.index(of: trash))
         XCTAssertEqual(try String(contentsOf: trashed, encoding: .utf8), "one")
         XCTAssertEqual(bench.documents.map(\.url), [keep])
         XCTAssertTrue(bench.back.isEmpty)
         waitFor { bench.side.git?.fileTree.changes[target.path]?.last?.flag == "D" }
-        XCTAssertNil(try menu(target.lastPathComponent).item(withTitle: "移到废纸篓"))
+        let deletedMenu = try menu(target.lastPathComponent)
+        XCTAssertNil(deletedMenu.item(withTitle: "移到废纸篓"))
+        XCTAssertNil(deletedMenu.item(withTitle: "在 Finder 中显示"))
     }
 
     @MainActor func testTrashPreservesDirtyTabOnCancelOrFailure() throws {

@@ -110,6 +110,113 @@ final class WorkspaceTests: XCTestCase {
         }
     }
 
+    func testWorkspaceSearchMatchModesAndRegularExpressions() throws {
+        let root = try makeTestWorkspace()
+        try "user User USER userID user_1\n🍓 user.42\n".write(to: root.appendingPathComponent("a.md"), atomically: true, encoding: .utf8)
+        var options = SearchOptions()
+        func find(_ query: String) throws -> [SearchHit] {
+            var hits = [SearchHit]()
+            try WorkspaceSearch.find(query, in: root, options: options, job: ShellJob()) { hits += $0 }
+            return hits
+        }
+        XCTAssertEqual(try find("user").count, 6)
+        XCTAssertEqual(try find("User").count, 1)
+        options.caseMode = .insensitive
+        XCTAssertEqual(try find("User").count, 6)
+        options.caseMode = .sensitive
+        options.wholeWord = true
+        XCTAssertEqual(try find("user").count, 2)
+        XCTAssertTrue(try find(#"user\.\d+"#).isEmpty)
+        options.regex = true
+        let match = try XCTUnwrap(find(#"user\.\d+"#).first)
+        XCTAssertEqual([match.line, match.column, match.length], [2, 3, 7])
+        XCTAssertThrowsError(try find("["))
+    }
+
+    func testWorkspaceSearchIntersectsDirectoryTypesAndGlobsWithoutRevivingIgnoredFiles() throws {
+        let root = try makeTestWorkspace()
+        try ShellJob().run(Tools.git, ["init", "-q"], in: root)
+        try "ignored.py\nignored/\n".write(to: root.appendingPathComponent(".gitignore"), atomically: true, encoding: .utf8)
+        let folder = "Docs [v2]"
+        let allowed = ["guide.MD", "nested/app.py", "nested/-types.d.ts", "extra.TS"].map { folder + "/" + $0 }
+        let ignored = ["ignored.py", "ignored/deep.md", "node_modules/pkg/file.ts", ".build/generated.py"].map { folder + "/" + $0 }
+        let others = [folder + "/notes.txt", folder + "/view.tsx", folder + "/Tests/unit.ts", "Docs v2/outside.md"]
+        for path in allowed + ignored + others {
+            let url = root.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try "needle".write(to: url, atomically: true, encoding: .utf8)
+        }
+        var options = SearchOptions()
+        options.extensions = ["md", "py", "ts"]
+        options.excludes = ["**/Tests/**"]
+        func find() throws -> [String] {
+            var hits = [SearchHit]()
+            try WorkspaceSearch.find("needle", in: root, options: options, job: ShellJob()) { hits += $0 }
+            return hits.map(\.path)
+        }
+        XCTAssertEqual(Set(try find()), Set(allowed + ["Docs v2/outside.md"]))
+        options.directory = folder
+        XCTAssertEqual(try find(), allowed.sorted())
+        options.includes = ["**/nested/**", "*.MD", "ignored.py", "**/Tests/**", "**/node_modules/**"]
+        XCTAssertEqual(Set(try find()), Set(allowed.dropLast()))
+        options.includes = ["**/*.txt"]
+        XCTAssertTrue(try find().isEmpty)
+        options.extensions = ["["]
+        XCTAssertThrowsError(try find())
+    }
+
+    @MainActor func testSearchPanelAppliesFiltersRefreshesAndClearsScope() throws {
+        let root = try makeTestWorkspace()
+        for path in ["a.md", "b.py", "c.ts", "d.rs"] {
+            try "needle Needles".write(to: root.appendingPathComponent(path), atomically: true, encoding: .utf8)
+        }
+        let bench = Workbench()
+        defer { bench.cancelWorkspaceJobs(); bench.window.orderOut(nil) }
+        bench.openFolder(root, remember: false)
+        bench.monitor = nil
+        bench.selectSection(.search)
+        let panel = bench.side.searchBox
+        func click(_ tip: String) throws {
+            let button = try XCTUnwrap(descendants(NSButton.self, of: panel).first { $0.toolTip == tip && !$0.isHiddenOrHasHiddenAncestor })
+            button.performClick(nil)
+        }
+        func edit(_ field: NSTextField, _ text: String) {
+            field.stringValue = text
+            panel.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: field))
+        }
+        func waitForHits(_ paths: [String], line: UInt = #line) {
+            let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                bench.queryJob == nil && bench.side.hits.map(\.path) == paths
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed, line: line)
+        }
+        try click("搜索范围")
+        try click("搜索 .md 文件")
+        try click("搜索 .py 文件")
+        try click("全词匹配")
+        edit(panel.query, "needle")
+        waitForHits(["a.md", "b.py"])
+        let fields = descendants(NSTextField.self, of: panel)
+        let types = try XCTUnwrap(fields.first { $0.accessibilityLabel() == "文件扩展名" })
+        edit(types, ".PY/.ts, *.rs .py")
+        XCTAssertEqual(panel.options.extensions, ["py", "ts", "rs"])
+        let exclude = try XCTUnwrap(fields.first { $0.accessibilityLabel() == "排除文件" })
+        edit(exclude, "*.ts; *.md")
+        let include = try XCTUnwrap(fields.first { $0.accessibilityLabel() == "包含文件" })
+        edit(include, "{b,c}.*; *.rs")
+        try click("搜索范围")
+        waitForHits(["b.py", "d.rs"])
+        XCTAssertTrue(fields.contains { $0.stringValue.contains("排除 *.ts") && !$0.isHiddenOrHasHiddenAncestor })
+        try "nothing".write(to: root.appendingPathComponent("d.rs"), atomically: true, encoding: .utf8)
+        bench.refresh(changedPaths: [root.appendingPathComponent("d.rs").path])
+        waitForHits(["b.py"])
+        try click("清除搜索范围")
+        waitForHits(["a.md", "b.py", "c.ts"])
+        XCTAssertTrue(panel.options.wholeWord)
+        bench.openFolder(try makeTestWorkspace(), remember: false)
+        XCTAssertEqual(panel.options, SearchOptions())
+    }
+
     func testCappedSearchReturnsTheSameMatchesAfterUnrelatedChanges() throws {
         let root = try makeTestWorkspace()
         let matches = String(repeating: "needle\n", count: 50)
@@ -477,6 +584,9 @@ final class WorkspaceTests: XCTestCase {
         let fixture = try makeTestWorkspace()
         let repo = fixture.appendingPathComponent("project", isDirectory: true)
         try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        let subfolder = repo.appendingPathComponent("Docs [v2]", isDirectory: true)
+        try FileManager.default.createDirectory(at: subfolder, withIntermediateDirectories: true)
+        try "one".write(to: subfolder.appendingPathComponent("inside.md"), atomically: true, encoding: .utf8)
         let target = repo.appendingPathComponent("要删除 #1.md"), keep = repo.appendingPathComponent("keep.md")
         let trashed = fixture.appendingPathComponent("trashed.md")
         try "one".write(to: target, atomically: true, encoding: .utf8)
@@ -506,7 +616,20 @@ final class WorkspaceTests: XCTestCase {
                 timestamp: 0, windowNumber: bench.window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
             return try XCTUnwrap(outline.menu(for: event))
         }
+        let subMenu = try menu(subfolder.lastPathComponent)
+        let inFolder = try XCTUnwrap(subMenu.item(withTitle: "在此文件夹中搜索"))
+        bench.side.query.stringValue = "one"
+        subMenu.performActionForItem(at: subMenu.index(of: inFolder))
+        XCTAssertEqual(bench.side.section, .search)
+        XCTAssertEqual(bench.side.searchBox.options.directory, "Docs [v2]")
+        waitFor { bench.side.hits.map(\.path) == ["Docs [v2]/inside.md"] }
+        bench.selectSection(.files)
         let folderMenu = try menu(repo.lastPathComponent)
+        let searchFolder = try XCTUnwrap(folderMenu.item(withTitle: "在此文件夹中搜索"))
+        folderMenu.performActionForItem(at: folderMenu.index(of: searchFolder))
+        XCTAssertEqual(bench.side.section, .search)
+        XCTAssertNil(bench.side.searchBox.options.directory)
+        bench.selectSection(.files)
         XCTAssertNil(folderMenu.item(withTitle: "移到废纸篓"))
         XCTAssertEqual((folderMenu.item(withTitle: "在 Finder 中显示")?.representedObject as? URL)?.path, repo.path)
         XCTAssertNotEqual(try row(target.lastPathComponent), outline.selectedRow)

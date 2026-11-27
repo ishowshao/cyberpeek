@@ -141,6 +141,65 @@ final class DocumentTests: XCTestCase {
         XCTAssertEqual(try firstLineNumber(lineCount: 253), short)
     }
 
+    @MainActor func testSearchResultShowsAsMuchOfLineStartAsFits() throws {
+        let folder = try makeTestWorkspace(), name = "sample.txt"
+        let file = folder.appendingPathComponent(name)
+        let line = String(repeating: "a", count: 16) + "near" + "\t🍓中文" + String(repeating: "a", count: 200) + "far"
+            + String(repeating: "z", count: 180)
+        let prefix = String(repeating: "short\n", count: 180)
+        try (prefix + line).write(to: file, atomically: true, encoding: .utf8)
+        let bench = Workbench()
+        defer { bench.cancelWorkspaceJobs(); bench.window.orderOut(nil) }
+        bench.window.makeKeyAndOrderFront(nil)
+        bench.openFolder(folder, remember: false)
+        bench.selectSection(.search)
+        func openHit(_ range: NSRange) {
+            let hit = SearchHit(path: name, line: 181, excerpt: line, column: range.location, length: range.length)
+            bench.side.onOpen?(.searchHit(hit), false)
+        }
+        let near = (line as NSString).range(of: "near"), far = (line as NSString).range(of: "far")
+        openHit(far) // First activation loads the document asynchronously.
+        let opened = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in bench.current?.url == file }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [opened], timeout: 5), .completed)
+        let editor = try XCTUnwrap(bench.current), clip = editor.scroll.contentView
+        func selectionRect(_ local: NSRange, at sourceLine: UInt = #line) -> NSRect {
+            bench.window.displayIfNeeded()
+            let range = NSRange(location: prefix.utf16.count + local.location, length: local.length)
+            XCTAssertEqual(editor.text.selectedRange(), range, line: sourceLine)
+            let screen = editor.text.firstRect(forCharacterRange: range, actualRange: nil)
+            let rect = editor.text.convert(bench.window.convertFromScreen(screen), from: nil)
+            XCTAssertGreaterThan(rect.height, 0, line: sourceLine)
+            XCTAssertTrue(clip.bounds.minY <= rect.midY && rect.midY <= clip.bounds.maxY, line: sourceLine)
+            return rect
+        }
+
+        let farRect = selectionRect(far)
+        XCTAssertEqual(clip.bounds.maxX, farRect.maxX, accuracy: 1)
+        XCTAssertLessThanOrEqual(clip.bounds.minX, farRect.minX)
+        clip.scroll(to: NSPoint(x: 100, y: clip.bounds.minY))
+        openHit(near) // Already visible at x=100, but also visible at the line start.
+        let nearRect = selectionRect(near)
+        XCTAssertEqual(clip.bounds.minX, 0, accuracy: 0.5)
+        XCTAssertLessThan(nearRect.maxX, clip.bounds.maxX)
+
+        // Straddle the right edge: some of the match already fits at the origin.
+        let edge = editor.text.characterIndexForInsertion(at: NSPoint(x: clip.bounds.maxX, y: nearRect.midY))
+        let partial = NSRange(location: edge - prefix.utf16.count - 2, length: 12)
+        openHit(partial)
+        let partialRect = selectionRect(partial)
+        XCTAssertGreaterThan(clip.bounds.minX, 0)
+        XCTAssertEqual(clip.bounds.maxX, partialRect.maxX, accuracy: 1)
+
+        let caret = NSRange(location: far.location, length: 0)
+        openHit(caret)
+        let caretRect = selectionRect(caret)
+        XCTAssertEqual(clip.bounds.maxX, caretRect.minX, accuracy: 1)
+        let oversized = (line as NSString).range(of: String(repeating: "z", count: 180))
+        openHit(oversized)
+        let wideRect = selectionRect(oversized)
+        XCTAssertEqual(clip.bounds.minX, wideRect.minX, accuracy: 1)
+    }
+
     @MainActor func testScrolledSelectionAndMarkedTextUseVisibleCoordinates() throws {
         let precedingLines = String(repeating: "短行\n", count: 2_000)
         let prefix = String(repeating: "a", count: 150) + "🍓"
@@ -149,7 +208,7 @@ final class DocumentTests: XCTestCase {
         defer { window.orderOut(nil) }
         let text = editor.text
         let target = (source as NSString).range(of: "目标")
-        editor.go(2_001, column: prefix.utf16.count, length: target.length)
+        editor.go(2_001, column: prefix.utf16.count, matchLength: target.length)
         XCTAssertEqual(text.selectedRange(), target)
         XCTAssertEqual(editor.cursor.line, 2_001)
 

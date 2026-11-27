@@ -86,6 +86,48 @@ enum Tools {
         + searchExclusions.flatMap { ["-g", "!" + $0] }
 }
 
+struct SearchOptions: Equatable {
+    enum CaseMode: String, CaseIterable {
+        case smart = "智能", sensitive = "区分", insensitive = "忽略"
+
+        var flag: String {
+            switch self {
+            case .smart: return "--smart-case"
+            case .sensitive: return "--case-sensitive"
+            case .insensitive: return "--ignore-case"
+            }
+        }
+    }
+
+    var caseMode = CaseMode.smart
+    var wholeWord = false
+    var regex = false
+    var directory: String?
+    var extensions: [String] = []
+    var includes: [String] = []
+    var excludes: [String] = []
+
+    var fileFlags: [String] {
+        get throws {
+            var flags = excludes.flatMap { ["-g", "!" + $0] }
+            for ext in extensions {
+                guard !ext.isEmpty, ext.allSatisfy({ $0.isLetter || $0.isNumber || ".-_+".contains($0) }) else {
+                    throw CyberPeekError("文件类型格式无效：" + ext)
+                }
+                // Extension matching is independent of the case mode for the search text.
+                let suffix = ext.map { ch in
+                    let lower = ch.lowercased(), upper = ch.uppercased()
+                    return lower != upper && lower.unicodeScalars.count == 1 && upper.unicodeScalars.count == 1
+                        ? "[\(lower)\(upper)]" : String(ch)
+                }.joined()
+                flags += ["--type-add", "cyberpeek:*." + suffix]
+            }
+            if !extensions.isEmpty { flags += ["--type", "cyberpeek"] }
+            return flags
+        }
+    }
+}
+
 struct SearchHit: Hashable {
     let path: String
     let line: Int
@@ -107,9 +149,9 @@ enum WorkspaceSearch {
         }
         return true
     }
-    static func paths(in root: URL, job: ShellJob) throws -> [String] {
+    static func paths(in root: URL, job: ShellJob, flags: [String] = []) throws -> [String] {
         var paths = [String](), pending = Data()
-        try job.run(Tools.rg, Tools.searchFlags + ["--files", "--null"], in: root, success: [0,1]) { chunk in
+        try job.run(Tools.rg, Tools.searchFlags + flags + ["--files", "--null"], in: root, success: [0,1]) { chunk in
             pending.append(chunk)
             let consumed = pending.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) -> Int in
                 var start = 0
@@ -126,13 +168,17 @@ enum WorkspaceSearch {
         return paths
     }
 
-    static func find(_ query: String, in root: URL, job: ShellJob, deliver: @escaping ([SearchHit]) -> Void) throws {
+    static func find(_ query: String, in root: URL, options: SearchOptions = SearchOptions(), job: ShellJob, deliver: @escaping ([SearchHit]) -> Void) throws {
         var pending = Data(), hits = [SearchHit](), total = 0
         var lastDelivery = Date.distantPast
         defer { if !hits.isEmpty { deliver(hits) } }
-        // The first 1,200 hits must be repeatable when only unrelated files changed.
-        try job.run(Tools.rg, Tools.searchFlags + ["--sort", "path", "--json", "--smart-case", "--fixed-strings", "-e", query, "."],
-                    in: root, success: [0,1]) { chunk in
+        let fileFlags = try options.fileFlags
+        var arguments = Tools.searchFlags + ["--sort", "path", "--json", options.caseMode.flag]
+        if !options.regex { arguments.append("--fixed-strings") }
+        if options.wholeWord { arguments.append("--word-regexp") }
+        arguments += ["-e", query, "--"]
+
+        func consume(_ chunk: Data) -> Bool {
             pending.append(chunk)
             while let end = pending.firstIndex(of: 10) {
                 let row = pending.prefix(upTo: end)
@@ -165,6 +211,42 @@ enum WorkspaceSearch {
                 deliver(hits); hits.removeAll(keepingCapacity: true); lastDelivery = Date()
             }
             return true
+        }
+
+        if options.directory == nil && options.includes.isEmpty {
+            try job.run(Tools.rg, fileFlags + arguments + ["."], in: root, success: [0,1], output: consume)
+            return
+        }
+
+        // Explicit positive -g patterns override ignore files and type filters in ripgrep.
+        // Subtract nonmatching paths instead, so all scope controls only narrow the search.
+        var files = try paths(in: root, job: job, flags: fileFlags)
+        if let directory = options.directory {
+            let prefix = directory + "/"
+            files.removeAll { !$0.hasPrefix(prefix) }
+        }
+        if !options.includes.isEmpty {
+            let inverse = options.includes.flatMap { ["-g", "!" + $0] }
+            let outside = Set(try paths(in: root, job: job, flags: fileFlags + inverse))
+            files.removeAll { outside.contains($0) }
+        }
+        // Keep argv well below macOS ARG_MAX and retain sorted order across batches.
+        var batch = [String](), bytes = 0
+        for path in files {
+            let size = path.utf8.count + 16
+            if bytes + size > 64 * 1024 && !batch.isEmpty {
+                try job.run(Tools.rg, arguments + batch, in: root, success: [0,1], output: consume)
+                batch.removeAll(keepingCapacity: true)
+                bytes = 0
+            }
+            batch.append("./" + path)
+            bytes += size
+        }
+        if !batch.isEmpty {
+            try job.run(Tools.rg, arguments + batch, in: root, success: [0,1], output: consume)
+        } else if options.regex {
+            // Still report malformed expressions when the scope contains no files.
+            try job.run(Tools.rg, arguments + ["/dev/null"], in: root, success: [0,1], output: consume)
         }
     }
 

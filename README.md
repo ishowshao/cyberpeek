@@ -2,6 +2,8 @@
 
 CyberPeek 是用 Swift 和 AppKit 编写的轻量级 macOS 代码编辑器，适合在 coding agent 改完代码后阅读源码和审阅差异。打开一个文件夹即可浏览、编辑、搜索或审阅 Git 改动。需要 macOS 14 或更高版本。
 
+[GitHub Releases](https://github.com/ishowshao/cyberpeek/releases/latest) 提供两个安装包。Apple Silicon Mac 可下载较小的 arm64 版；Intel Mac 或需在两种芯片之间共用同一份应用时，下载通用版（Universal）。解压后将 CyberPeek.app 拖入「应用程序」。
+
 ## 使用
 
 | 操作 | 快捷键 |
@@ -41,6 +43,12 @@ CyberPeek 是用 Swift 和 AppKit 编写的轻量级 macOS 代码编辑器，适
 
 快速打开、全文搜索和文件监听都以打开的文件夹为范围。快速打开和全文搜索默认跳过任意层级的 `node_modules` 目录。首次按 ⌘P 时会在后台建立文件名索引，索引期间可以继续输入。打开 Git 仓库的子目录时，源代码管理面板只列出涉及该子目录的改动和提交。
 
+按 ⇧⌘F 打开工作区搜索。「Aa 智能」在搜索词含大写字母时区分大小写，也可选「区分」或「忽略」。打开「全词」可按完整单词查找，打开 `.*` 可输入正则表达式。
+
+点击搜索结果时，编辑器会尽量显示行首。如果从行首看不全命中，只向右滚动到命中末尾刚好可见。命中比编辑区域更宽时，从命中开头显示。
+
+展开「范围」，点选 `.md`、`.py`、`.ts`，或输入其他扩展名（例如 `.swift, .json`）。多选时搜索任一所选类型，扩展名匹配忽略大小写。包含和排除条件使用工作区相对路径通配模式，例如包含 `Sources/**`、排除 `**/Tests/**`，多个模式用分号分隔。右键资源管理器中的目录可选择「在此文件夹中搜索」。这些条件可以叠加，收起后仍可查看或清除当前范围。
+
 如果打开的文件夹不属于 Git 仓库，CyberPeek 会在其中查找各个仓库和 Git 工作树，并在源代码管理面板按仓库列出变更和提交。左下角显示当前标签页所属仓库的分支。打开仓库外的文件时，分支栏会隐藏。
 
 打开的源码会跟踪磁盘变化。当存在本地编辑时，查看器保留缓冲区并提供版本比较。支持 UTF-8 和带 BOM 的 UTF-16，保存时保留原编码以及普通 LF / CRLF 换行。
@@ -56,6 +64,8 @@ xcodebuild -project CyberPeek.xcodeproj -scheme CyberPeek -configuration Release
   -derivedDataPath .build build
 open .build/Build/Products/Release/CyberPeek.app
 ```
+
+发布通用版时，在上述 `xcodebuild` 命令中加入 `ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO`。应用和内嵌的 ripgrep 均包含两种架构。
 
 首次构建从 npm 和上游 GitHub 发布页下载锁定版本并校验摘要，依赖缓存位于 `.vendor`。构建需要完整的 Xcode 和 Python 3。应用自带 ripgrep 和语法解析器，运行时 Git 功能使用 `/usr/bin/git`。
 

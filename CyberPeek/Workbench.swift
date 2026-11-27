@@ -74,6 +74,12 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         side.onFolder = { [weak self] in self?.chooseFolder() }
         side.onCopyRelativePath = { [weak self] url in self?.copyRelativePath(of: url) }
         side.onTrashFile = { [weak self] url in self?.trashFile(url) }
+        side.onSearchFolder = { [weak self] folder in
+            guard let self, let root = self.root else { return }
+            let path = workspaceRelativePath(of: folder, from: root)
+            self.selectSection(.search)
+            self.side.searchBox.setDirectory(path == "." ? nil : path)
+        }
         side.onRefresh = { [weak self] in self?.refresh() }
         side.onExpandDirectory = { [weak self] in self?.requestGitDetails() }
         side.onQuery = { [weak self] in self?.search($0) }
@@ -421,12 +427,13 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
             if side.section == .search { side.reload() }
         }
         guard !query.isEmpty, let root else { return }
+        let options = side.searchBox.options
         let job = ShellJob(); queryJob = job
         DispatchQueue.global(qos:.userInitiated).asyncAfter(deadline:.now()+0.14) {
             var errorText: String?
             var refreshed: [SearchHit] = []
             do {
-                try WorkspaceSearch.find(query,in:root,job:job) { hits in
+                try WorkspaceSearch.find(query, in: root, options: options, job: job) { hits in
                     if keepingResults { refreshed += hits; return }
                     DispatchQueue.main.async {
                         guard self.queryVersion == version else { return }
@@ -472,7 +479,9 @@ final class Workbench: NSObject, NSWindowDelegate, NSSplitViewDelegate {
             else { target = .file(url) }
             open(target, pin: pin, explorerReveal: .preserve)
         case let .hit(hit):
-            if let root { open(.file(root.appendingPathComponent(hit.path)),line:hit.line,column:hit.column,length:hit.length,pin:pin) }
+            if let root {
+                open(.file(root.appendingPathComponent(hit.path)), line: hit.line, column: hit.column, matchLength: hit.length, pin: pin)
+            }
         case let .change(repo, c):
             open(.patch(repo, c), pin: pin)
         default: break

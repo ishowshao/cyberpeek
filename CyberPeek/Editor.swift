@@ -368,12 +368,39 @@ final class Editor: DocumentTab, NSTextViewDelegate {
         let offset = text.selectedRange().location, line = lineNumber(at: offset)
         return (line, offset-lineStarts[line-1]+1)
     }
-    func go(_ line: Int, column: Int = 0, length: Int = 0) {
+    func go(_ line: Int, column: Int = 0, matchLength: Int? = nil) {
         let i = max(0, min(lineStarts.count-1, line-1))
         let end = i+1 < lineStarts.count ? lineStarts[i+1]-1 : (text.string as NSString).length
         let offset = min(end, lineStarts[i] + column)
-        let range = NSRange(location: offset, length: min(length,end-offset))
-        text.setSelectedRange(range); text.scrollRangeToVisible(range); redraw()
+        let range = NSRange(location: offset, length: min(matchLength ?? 0,end-offset))
+        if matchLength != nil { view.window?.contentView?.layoutSubtreeIfNeeded() }
+        text.setSelectedRange(range)
+        text.scrollRangeToVisible(range)
+        if matchLength != nil { alignSearchMatch(range) }
+        redraw()
+    }
+
+    private func alignSearchMatch(_ range: NSRange) {
+        guard let layout = text.textLayoutManager, let content = layout.textContentManager,
+              let start = content.location(content.documentRange.location, offsetBy: range.location),
+              let end = content.location(start, offsetBy: range.length),
+              let match = NSTextRange(location: start, end: end) else { return }
+        var extent = CGRect.null
+        layout.enumerateTextSegments(in: match, type: .standard, options: [.rangeNotRequired]) { _, rect, _, _ in
+            extent = extent.union(rect)
+            return true
+        }
+        let clip = scroll.contentView
+        guard !extent.isNull, clip.bounds.width > 0 else { return }
+        let left = text.textContainerOrigin.x + extent.minX
+        let right = text.textContainerOrigin.x + extent.maxX
+        // A match wider than the viewport opens at its beginning.
+        let scale = text.window?.backingScaleFactor ?? 1
+        let x = extent.width > clip.bounds.width ? left : ceil((right - clip.bounds.width) * scale) / scale
+        var bounds = clip.bounds
+        bounds.origin.x = max(0, x)
+        clip.scroll(to: clip.constrainBoundsRect(bounds).origin)
+        scroll.reflectScrolledClipView(clip)
     }
     func textDidChange(_ notification: Notification) {
         if let manager = text.undoManager, manager.isUndoing || manager.isRedoing { return }

@@ -18,6 +18,7 @@
 		866349A56DAC728AA7F31CAC /* Markdown.c in Sources */ = {isa = PBXBuildFile; fileRef = 753DD38C3CEA93D7B03B1F33 /* Markdown.c */; };
 		88EB2F911D9096C237637497 /* EditorFontTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDDA2642F7C57FECBFB89B8E /* EditorFontTests.swift */; };
 		9CDD859A99858AAFCD71AE12 /* GitLineChanges.swift in Sources */ = {isa = PBXBuildFile; fileRef = B53D34E8E4FBB5E76EC9695B /* GitLineChanges.swift */; };
+		A8C7721006D46539F5C6766C /* SearchControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DCBD7608D3399924A3F55F1 /* SearchControls.swift */; };
 		B5B59D3CC649FE8E40037960 /* CyberPeek.icns in Resources */ = {isa = PBXBuildFile; fileRef = 7A88BF9C18210D390FEC5C27 /* CyberPeek.icns */; };
 		BBA2D39ECA74363720E53F0D /* EditorFontSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF4DFB0DD97BD6F5C588E682 /* EditorFontSettings.swift */; };
 		BCAC4FD5D3C41BCAFFBCFF9B /* Workbench.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F9893847237EA912766161F /* Workbench.swift */; };
@@ -41,6 +42,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		0DCBD7608D3399924A3F55F1 /* SearchControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchControls.swift; sourceTree = "<group>"; };
 		0EA27A682B99DFD6A63A6371 /* Interface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Interface.swift; sourceTree = "<group>"; };
 		1B32D483C25A4E13DFE61400 /* Documents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Documents.swift; sourceTree = "<group>"; };
 		32661D5718159AC5069BD1E9 /* Syntax.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Syntax.h; sourceTree = "<group>"; };
@@ -84,6 +86,7 @@
 				BB3513CB756295F478D367B1 /* main.swift */,
 				753DD38C3CEA93D7B03B1F33 /* Markdown.c */,
 				DF8CB72B554D9CAFA154B176 /* QuickOpen.swift */,
+				0DCBD7608D3399924A3F55F1 /* SearchControls.swift */,
 				9EC886C43D8314EDD2490844 /* Sidebar.swift */,
 				50FBB6A654A9255F24CB88F9 /* Syntax.c */,
 				32661D5718159AC5069BD1E9 /* Syntax.h */,
@@ -263,6 +266,7 @@
 				1F779168E90997C04FCB506C /* Interface.swift in Sources */,
 				866349A56DAC728AA7F31CAC /* Markdown.c in Sources */,
 				BDE08AA518CA3ED1F6CA98D4 /* QuickOpen.swift in Sources */,
+				A8C7721006D46539F5C6766C /* SearchControls.swift in Sources */,
 				F581292C99AE92ABDDA4372E /* Sidebar.swift in Sources */,
 				736798FC7C30FA03637F8529 /* Syntax.c in Sources */,
 				BCAC4FD5D3C41BCAFFBCFF9B /* Workbench.swift in Sources */,

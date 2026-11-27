@@ -102,6 +102,7 @@ private extension NSClipView {
 }
 
 private final class FileOutline: NSOutlineView {
+    var onSearchFolder: ((URL) -> Void)?
     var activateSelection: (() -> Void)?
     var onCopyRelativePath: ((URL) -> Void)?
     var onTrashFile: ((URL) -> Void)?
@@ -133,6 +134,12 @@ private final class FileOutline: NSOutlineView {
         item.representedObject = url
         // Git also supplies rows for files and directories that no longer exist on disk.
         if (try? FileManager.default.attributesOfItem(atPath: url.path)) != nil {
+            if case .directory = node.role {
+                let find = menu.addItem(withTitle: "在此文件夹中搜索", action: #selector(searchFolder(_:)), keyEquivalent: "")
+                find.target = self
+                find.image = symbol("magnifyingglass", size: 13)
+                find.representedObject = url
+            }
             let reveal = menu.addItem(withTitle: "在 Finder 中显示", action: #selector(revealInFinder(_:)), keyEquivalent: "")
             reveal.target = self
             reveal.image = symbol("magnifyingglass", size: 13)
@@ -148,6 +155,9 @@ private final class FileOutline: NSOutlineView {
         return menu
     }
 
+    @objc private func searchFolder(_ sender: NSMenuItem) {
+        if let url = sender.representedObject as? URL { onSearchFolder?(url) }
+    }
     @objc private func copyPath(_ sender: NSMenuItem) {
         if let url = sender.representedObject as? URL { onCopyRelativePath?(url) }
     }
@@ -193,8 +203,12 @@ private struct FileBadge: Equatable {
     }
 }
 
-final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, NSSearchFieldDelegate {
-    let view = NSView(), query = NSSearchField()
+final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate {
+    let view = NSView(), searchBox = SearchControls()
+    var query: NSSearchField { searchBox.query }
+    var onSearchFolder: ((URL) -> Void)? {
+        didSet { outline.onSearchFolder = onSearchFolder }
+    }
     private let outline = FileOutline()
     let header = label("资源管理器", 12, weight: .semibold), count = label("",10,color: Palette.muted)
     var onOpen: ((SideNode, Bool) -> Void)?
@@ -215,7 +229,11 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
     var gitMessage = "正在读取仓库…"
     var hits: [SearchHit] = []
     var searchInfo = "" {
-        didSet { if section == .search && oldValue != searchInfo { count.stringValue = searchInfo } }
+        didSet { if section == .search && oldValue != searchInfo { updateSearchInfo() } }
+    }
+    private func updateSearchInfo() {
+        count.stringValue = searchInfo.components(separatedBy: .newlines).last ?? searchInfo
+        count.toolTip = searchInfo
     }
     private var roots: [SideNode] = []
     private var displayedFileTree: GitFileTree?
@@ -223,7 +241,7 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
     private var gitExpansion = [String: Bool]()
     private var reloading = false
     private var commitCache: [String:[SideNode]] = [:]
-    private let controls = NSView(), searchBox = NSView()
+    private let controls = NSView()
     private lazy var collapseButton = ActionButton(icon: "rectangle.stack.badge.minus", tip: "折叠所有文件夹") { [weak self] in
         self?.collapseFolders()
     }
@@ -235,9 +253,10 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
         collapseButton.isHidden = true
         let heading = stack([header, NSView(), folderButton, refresh, collapseButton], spacing: 9)
         controls.place(heading, inset: 9)
-        query.placeholderString = "搜索工作区"; query.delegate = self
-        query.sendsSearchStringImmediately = true
-        searchBox.place(query, inset: 7)
+        searchBox.onChange = { [weak self] in
+            guard let self else { return }
+            self.onQuery?(self.query.stringValue)
+        }
         outline.activateSelection = { [weak self] in self?.activate(pin:true, keyboard:true) }
         configureTable(outline); outline.outlineTableColumn = outline.tableColumns.first
         outline.autoresizesOutlineColumn = false
@@ -249,18 +268,19 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
         let foot = NSView()
         foot.place(count,inset: 6)
         let column = stack([controls,searchBox,scroller,foot], vertical: true)
-        view.place(column); controls.height(39); searchBox.height(38); foot.height(26)
+        view.place(column); controls.height(39); foot.height(26)
         for child in [controls,searchBox,scroller,foot] { child.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true }
         searchBox.isHidden = true
     }
     func reset(_ url: URL) {
-        folder = url; git = nil; gitMessage = "正在读取仓库…"; query.stringValue = ""; hits = []; searchInfo = ""
+        folder = url; git = nil; gitMessage = "正在读取仓库…"; searchBox.reset(); hits = []; searchInfo = ""
         states = [:]; gitExpansion = [:]; roots = []; commitCache = [:]
         switchTo(.files)
     }
     func switchTo(_ next: Section) {
         remember()
         section = next; roots = []; header.stringValue = section.rawValue
+        count.toolTip = nil
         searchBox.isHidden = section != .search
         collapseButton.isHidden = section != .files || folder == nil
         reload(rememberCurrent: false)
@@ -334,7 +354,7 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
             roots = groups.keys.sorted().map { path in
                 SideNode(path,path,.group,children: groups[path]!.map(SideNode.searchHit))
             }
-            count.stringValue = searchInfo
+            updateSearchInfo()
         }
         outline.reloadData()
         func expand(_ nodes: [SideNode], depth: Int) {
@@ -530,7 +550,6 @@ final class Sidebar: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
         commitCache["\(repo.path)|\(id)"] = SideNode.changeNodes(changes, repo: repo)
         if section == .git { reload() }
     }
-    func controlTextDidChange(_ obj: Notification) { onQuery?(query.stringValue) }
     func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int { (item as? SideNode)?.items(in: git?.fileTree).count ?? roots.count }
     func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any { ((item as? SideNode)?.items(in: git?.fileTree) ?? roots)[index] }
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool { (item as? SideNode)?.expandable == true }

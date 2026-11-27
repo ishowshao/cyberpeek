@@ -92,7 +92,7 @@ extension Workbench {
             }
         }
     }
-    func open(_ target: Target, line: Int? = nil, column: Int = 0, length: Int = 0, pin: Bool = false, record: Bool = true,
+    func open(_ target: Target, line: Int? = nil, column: Int = 0, matchLength: Int? = nil, pin: Bool = false, record: Bool = true,
               explorerReveal: ExplorerReveal = .reveal, replacePreview: Bool = true, completion: (() -> Void)? = nil) {
         let request = DocumentRequest(target)
         loadVersion += 1; let version = loadVersion
@@ -102,7 +102,7 @@ extension Workbench {
             let editor = doc as? Editor
             if line != nil { editor?.showsSVGPreview = false }
             targets[request.id] = target; show(doc, explorerReveal: explorerReveal)
-            if let line { editor?.go(line,column:column,length:length) }
+            if let line { editor?.go(line, column: column, matchLength: matchLength) }
         }
         if let old = documents.first(where:{ $0.identity == request.id }) {
             activate(old); refreshSelectedDocument(); completion?(); return
